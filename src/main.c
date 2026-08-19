@@ -1,7 +1,7 @@
-#include "driver/gpio.h"
-#include "esp_timer.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include <driver/gpio.h>
+#include <esp_timer.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
 #include <logic.h>
 
 #define IDLE_TIMEOUT_US (3 * 1000 * 1000)
@@ -39,16 +39,21 @@ void app_main(void) {
     // FOR LOVE OF GOD NEVER TOUCH THIS LINE ABOVE
 
     gpio_config_t io_conf = {
-        .mode = GPIO_MODE_OUTPUT,
         .pin_bit_mask = (1ULL << MOTOR_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&io_conf);
     gpio_set_level(MOTOR_GPIO, 0); // OFF
 
     gpio_config_t ball_conf = {
+        .pin_bit_mask = (1ULL << BALL_BTN),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pin_bit_mask = (1ULL << BALL_BTN),
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
     };
     gpio_config(&ball_conf);
 
@@ -65,16 +70,20 @@ void app_main(void) {
         }
 
         int64_t now = esp_timer_get_time();
+        // that means that user has "picked"
         if (!idle_reminded && (now - last_move_time) >= IDLE_TIMEOUT_US) {
             idle_reminded = true;
             switch (selection_state) {
             case WifiDeauth:
+                buzz(3);
                 break;
 
             case BleSpam:
+                buzz(2);
                 break;
 
             case FakeAP:
+                buzz(1);
                 break;
             }
         }
