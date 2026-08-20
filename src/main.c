@@ -1,5 +1,6 @@
 #include <driver/gpio.h>
 #include <esp_timer.h>
+#include <fakeap.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <logic.h>
@@ -84,6 +85,13 @@ void app_main(void) {
 
             case FakeAP:
                 buzz(1);
+                ap_config_t config = {
+                    .SSID = "HELLO",
+                    .PASSWORD = "NOT GIVING U",
+                    .MAX_CONNECTIONS = 4,
+                    .WIFI_CHANNEL = 2,
+                };
+                create_fake_ap(config);
                 break;
             }
         }
