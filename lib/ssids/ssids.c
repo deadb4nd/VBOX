@@ -1,6 +1,6 @@
 #include <string.h>
 
-const char *SSIDS[] = {
+char *CUSTOM_SSIDS[] = {
     "Click Here for Viruses",
     "Please Connect for Identity Theft",
     "Credit Card Hacker",

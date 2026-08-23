@@ -3,6 +3,6 @@
 
 #define arr_len(array) ((int)(sizeof(array) / sizeof((array)[0])))
 
-int const_arr_len(const char *array[]);
+int count_ssids(char *array[]);
 
 #endif

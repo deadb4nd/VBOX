@@ -7,6 +7,6 @@ void create_fake_ap(ap_config_t config);
 void create_config(ap_config_t *config);
 
 void init_ap();
-void ap_run(ap_config_t config);
+void ap_run(ap_config_t config, const char *ssid);
 
 #endif
