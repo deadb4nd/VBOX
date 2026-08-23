@@ -9,7 +9,7 @@ void create_config(ap_config_t *config) {
         config->MAX_CONNECTIONS = 4;
     }
     if (config->SSID[0] == '\0') {
-        strncpy((char *)config->SSID, "esp32c6 ap", sizeof(config->SSID) - 1);
+        strncpy((char *)config->SSID, "ESP32C6 WiFi", sizeof(config->SSID) - 1);
         config->SSID[sizeof(config->SSID) - 1] = '\0';
     }
     if (config->PASSWORD[0] == '\0') {

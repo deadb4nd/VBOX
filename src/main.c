@@ -87,10 +87,12 @@ void app_main(void) {
                 buzz(1);
                 ap_config_t config = {
                     .SSID = "HELLO",
-                    .PASSWORD = "NOT GIVING U",
+                    //.PASSWORD = "NOT GIVING U",
                     .MAX_CONNECTIONS = 4,
                     .WIFI_CHANNEL = 2,
                 };
+                while (true) {
+                }
                 create_fake_ap(config);
                 break;
             }
