@@ -1,4 +1,5 @@
 #include "fakeap.h"
+#include "esp_err.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_mac.h"
@@ -42,7 +43,6 @@ void init_ap() {
 }
 
 void ap_run(ap_config_t config, const char *ssid) {
-    // Safely copy SSID into config
     memset(config.SSID, 0, sizeof(config.SSID));
     strncpy((char *)config.SSID, ssid, sizeof(config.SSID) - 1);
 
@@ -63,8 +63,13 @@ void ap_run(ap_config_t config, const char *ssid) {
         wifi_config.ap.authmode = WIFI_AUTH_OPEN;
     }
 
-    // Stop if running, reconfigure, start
-    esp_wifi_stop();
+    // stop if running, reconfigure, start
+    esp_err_t error = esp_wifi_stop();
+
+    if (error != ESP_OK) {
+        ESP_LOGI(TAG, "Error while stopping WiFi: %d", error);
+    }
+
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
 

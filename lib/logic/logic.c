@@ -1,20 +1,27 @@
 #include "logic.h"
-#include <stdbool.h>
+#include <esp_timer.h>
+
+#define DEBOUNCE_US 200000 // 200 ms — tweak by feel
+
+static int64_t last_accepted_us = 0;
 
 bool has_ball_moved(int ball_value, int last_value) {
-    if (ball_value == 1 && last_value == 0) {
-        return true;
-    } else {
-        return false;
-    }
+  if (ball_value == last_value) {
+    return false; // no electrical change at all
+  }
+
+  int64_t now = esp_timer_get_time();
+  if ((now - last_accepted_us) < DEBOUNCE_US) {
+    return false; // still bouncing — ignore
+  }
+
+  last_accepted_us = now;
+  return true; // one clean tick
 }
 
 void update(int *selection) {
-    if (*selection >= 3) {
-        *selection = 0;
-    } else {
-        *selection += 1;
-    }
-
-    return;
+  *selection += 1;
+  if (*selection >= 3) {
+    *selection = 0;
+  }
 }
