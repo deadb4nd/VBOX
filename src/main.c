@@ -1,3 +1,4 @@
+#include <ble_beacon.h>
 #include <driver/gpio.h>
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -10,88 +11,80 @@
 #define MOTOR_GPIO GPIO_NUM_2
 #define BALL_BTN GPIO_NUM_21
 
-#define IDLE_TIMEOUT_US (1500 * 1000)     // 1.5 s quiet → warning
+#define IDLE_TIMEOUT_US (1500 * 1000)     // 1.5 s quiet -> warning
 #define WARNING_DURATION_US (2000 * 1000) // 2 s heads-up before it fires
 #define DEBOUNCE_US 200000
 
-static const char *TAG = "tool";
+static const char *TAG = "VELO_BOX";
 
 static void configure_external_antenna(void) {
-  gpio_set_direction(GPIO_NUM_3, GPIO_MODE_OUTPUT);
-  gpio_set_level(GPIO_NUM_3, 0);
-  vTaskDelay(pdMS_TO_TICKS(100));
-  gpio_set_direction(GPIO_NUM_14, GPIO_MODE_OUTPUT);
-  gpio_set_level(GPIO_NUM_14, 1);
+    gpio_set_direction(GPIO_NUM_3, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_3, 0);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    gpio_set_direction(GPIO_NUM_14, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_14, 1);
 }
 
-static void motor_on(void) {
-  gpio_set_level(MOTOR_GPIO, 1);
-}
-static void motor_off(void) {
-  gpio_set_level(MOTOR_GPIO, 0);
-}
+static void motor_on(void) { gpio_set_level(MOTOR_GPIO, 1); }
+static void motor_off(void) { gpio_set_level(MOTOR_GPIO, 0); }
 
 static void haptic_tick(void) {
-  motor_on();
-  vTaskDelay(pdMS_TO_TICKS(220));
-  motor_off();
-  vTaskDelay(pdMS_TO_TICKS(100));
+    motor_on();
+    vTaskDelay(pdMS_TO_TICKS(220));
+    motor_off();
+    vTaskDelay(pdMS_TO_TICKS(100));
 }
 
 static void haptic_warning(void) {
-  printf("HAPTIC: Warning\n");
-  motor_on();
-  vTaskDelay(pdMS_TO_TICKS(350));
-  motor_off();
-  vTaskDelay(pdMS_TO_TICKS(250));
-  motor_on();
-  vTaskDelay(pdMS_TO_TICKS(350));
-  motor_off();
+    printf("HAPTIC: Warning\n");
+    motor_on();
+    vTaskDelay(pdMS_TO_TICKS(350));
+    motor_off();
+    vTaskDelay(pdMS_TO_TICKS(250));
+    motor_on();
+    vTaskDelay(pdMS_TO_TICKS(350));
+    motor_off();
 }
 
 static void haptic_confirm(void) {
-  printf("HAPTIC: Fire confirm\n");
-  motor_on();
-  vTaskDelay(pdMS_TO_TICKS(250));
-  motor_off();
+    printf("HAPTIC: Fire confirm\n");
+    motor_on();
+    vTaskDelay(pdMS_TO_TICKS(250));
+    motor_off();
 }
 
 static void haptic_cancel(void) {
-  printf("HAPTIC: Cancelled\n");
-  motor_on();
-  vTaskDelay(pdMS_TO_TICKS(220));
-  motor_off();
-  vTaskDelay(pdMS_TO_TICKS(120));
-  motor_on();
-  vTaskDelay(pdMS_TO_TICKS(220));
-  motor_off();
+    printf("HAPTIC: Cancelled\n");
+    motor_on();
+    vTaskDelay(pdMS_TO_TICKS(220));
+    motor_off();
+    vTaskDelay(pdMS_TO_TICKS(120));
+    motor_on();
+    vTaskDelay(pdMS_TO_TICKS(220));
+    motor_off();
 }
 
 static void haptic_startup(void) {
-  printf("HAPTIC: Startup\n");
-  motor_on();
-  vTaskDelay(pdMS_TO_TICKS(400));
-  motor_off();
-  vTaskDelay(pdMS_TO_TICKS(250));
-  motor_on();
-  vTaskDelay(pdMS_TO_TICKS(400));
-  motor_off();
+    printf("HAPTIC: Startup\n");
+    motor_on();
+    vTaskDelay(pdMS_TO_TICKS(400));
+    motor_off();
+    vTaskDelay(pdMS_TO_TICKS(250));
+    motor_on();
+    vTaskDelay(pdMS_TO_TICKS(400));
+    motor_off();
 }
 
 typedef enum {
-  ACTION_WIFI_DEAUTH = 0,
-  ACTION_BLE_SPAM,
-  ACTION_FAKE_AP,
-  ACTION_COUNT
+    ACTION_WIFI_DEAUTH = 0,
+    ACTION_BLE_SPAM,
+    ACTION_FAKE_AP,
+    ACTION_COUNT
 } action_t;
 
 static const char *action_names[] = {"WiFi Deauth", "BLE Spam", "Fake AP"};
 
-typedef enum {
-  STATE_BROWSING,
-  STATE_WARNING,
-  STATE_RUNNING
-} sys_state_t;
+typedef enum { STATE_BROWSING, STATE_WARNING, STATE_RUNNING } sys_state_t;
 
 static sys_state_t g_state = STATE_BROWSING;
 static action_t g_selection = ACTION_WIFI_DEAUTH;
@@ -100,165 +93,167 @@ static int g_last_ball = 0;
 static int64_t last_accepted_us = 0;
 
 static bool has_ball_moved(int ball_value, int last_value) {
-  if (ball_value == last_value)
-    return false;
-  int64_t now = esp_timer_get_time();
-  if ((now - last_accepted_us) < DEBOUNCE_US)
-    return false;
-  last_accepted_us = now;
-  return true;
+    if (ball_value == last_value)
+        return false;
+    int64_t now = esp_timer_get_time();
+    if ((now - last_accepted_us) < DEBOUNCE_US)
+        return false;
+    last_accepted_us = now;
+    return true;
 }
 
 static void update_selection(int *sel) {
-  *sel += 1;
-  if (*sel >= ACTION_COUNT)
-    *sel = 0;
+    *sel += 1;
+    if (*sel >= ACTION_COUNT)
+        *sel = 0;
 }
 
 static TaskHandle_t g_action_task = NULL;
 static volatile bool g_kill_action = false;
 
 static void action_task_wrapper(void *pvParameters) {
-  action_t action = (action_t)(intptr_t)pvParameters;
+    action_t action = (action_t)(intptr_t)pvParameters;
 
-  switch (action) {
-  case ACTION_WIFI_DEAUTH:
-    printf("TASK: WiFi deauth loop running\n");
-    while (!g_kill_action) {
-      // TODO: inject deauth frames here
-      vTaskDelay(pdMS_TO_TICKS(50));
+    switch (action) {
+    case ACTION_WIFI_DEAUTH:
+        printf("TASK: WiFi deauth loop running\n");
+        while (!g_kill_action) {
+            // TODO: inject deauth frames here
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        break;
+
+    case ACTION_BLE_SPAM:
+        init_ble_beacon();
+        printf("TASK: BLE INITIALIZED\n");
+        printf("TASK: BLE spam loop running\n");
+        while (!g_kill_action) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        break;
+
+    case ACTION_FAKE_AP: {
+        printf("TASK: Fake AP starting\n");
+        ap_config_t config = {
+            .SSID = "HELLO",
+            .MAX_CONNECTIONS = 4,
+            .WIFI_CHANNEL = 2,
+        };
+        create_fake_ap(config);
+        break;
     }
-    break;
 
-  case ACTION_BLE_SPAM:
-    printf("TASK: BLE spam loop running\n");
-    while (!g_kill_action) {
-      // TODO: send BLE spam here
-      vTaskDelay(pdMS_TO_TICKS(50));
+    default:
+        break;
     }
-    break;
 
-  case ACTION_FAKE_AP: {
-    printf("TASK: Fake AP starting\n");
-    ap_config_t config = {
-        .SSID = "HELLO",
-        .MAX_CONNECTIONS = 4,
-        .WIFI_CHANNEL = 2,
-    };
-    create_fake_ap(config);
-    break;
-  }
-
-  default:
-    break;
-  }
-
-  g_action_task = NULL;
-  vTaskDelete(NULL);
+    g_action_task = NULL;
+    vTaskDelete(NULL);
 }
 
 static void start_action(action_t action) {
-  g_kill_action = false;
-  xTaskCreate(action_task_wrapper, "action", 4096, (void *)(intptr_t)action, 5,
-              &g_action_task);
+    g_kill_action = false;
+    xTaskCreate(action_task_wrapper, "action", 4096, (void *)(intptr_t)action,
+                5, &g_action_task);
 }
 
 static void cancel_current_action(void) {
-  printf("Cancelling action...\n");
-  if (g_action_task != NULL) {
-    g_kill_action = true;
-    for (int i = 0; i < 50 && g_action_task != NULL; i++) {
-      vTaskDelay(pdMS_TO_TICKS(10));
-    }
+    printf("Cancelling action...\n");
     if (g_action_task != NULL) {
-      vTaskDelete(g_action_task);
-      g_action_task = NULL;
+        g_kill_action = true;
+        for (int i = 0; i < 50 && g_action_task != NULL; i++) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        if (g_action_task != NULL) {
+            vTaskDelete(g_action_task);
+            g_action_task = NULL;
+        }
     }
-  }
-  motor_off();
+    motor_off();
 }
 
 void app_main(void) {
-  configure_external_antenna(); // NEVER REMOVE
+    configure_external_antenna(); // NEVER REMOVE
 
-  gpio_config_t motor_conf = {
-      .pin_bit_mask = (1ULL << MOTOR_GPIO),
-      .mode = GPIO_MODE_OUTPUT,
-      .pull_up_en = GPIO_PULLUP_DISABLE,
-      .pull_down_en = GPIO_PULLDOWN_DISABLE,
-      .intr_type = GPIO_INTR_DISABLE,
-  };
-  gpio_config(&motor_conf);
-  motor_off();
+    gpio_config_t motor_conf = {
+        .pin_bit_mask = (1ULL << MOTOR_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&motor_conf);
+    motor_off();
 
-  gpio_config_t ball_conf = {
-      .pin_bit_mask = (1ULL << BALL_BTN),
-      .mode = GPIO_MODE_INPUT,
-      .pull_up_en = GPIO_PULLUP_ENABLE,
-      .pull_down_en = GPIO_PULLDOWN_DISABLE,
-      .intr_type = GPIO_INTR_DISABLE,
-  };
-  gpio_config(&ball_conf);
+    gpio_config_t ball_conf = {
+        .pin_bit_mask = (1ULL << BALL_BTN),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&ball_conf);
 
-  int64_t last_move_time = esp_timer_get_time();
-  int64_t warning_start_us = 0;
+    int64_t last_move_time = esp_timer_get_time();
+    int64_t warning_start_us = 0;
 
-  haptic_startup();
-  ESP_LOGI(TAG, "Ready. Roll ball to browse.");
+    haptic_startup();
+    ESP_LOGI(TAG, "Ready. Roll ball to browse.");
 
-  while (true) {
-    int ball_value = gpio_get_level(BALL_BTN);
-    int64_t now = esp_timer_get_time();
-    bool rolled = has_ball_moved(ball_value, g_last_ball);
+    while (true) {
+        int ball_value = gpio_get_level(BALL_BTN);
+        int64_t now = esp_timer_get_time();
+        bool rolled = has_ball_moved(ball_value, g_last_ball);
 
-    if (rolled) {
-      if (g_state == STATE_RUNNING) {
-        printf(">>> USER CANCELLED EXECUTION <<<\n");
-        cancel_current_action();
-        g_state = STATE_BROWSING;
-        haptic_cancel();
+        if (rolled) {
+            if (g_state == STATE_RUNNING) {
+                printf(">>> USER CANCELLED EXECUTION <<<\n");
+                cancel_current_action();
+                g_state = STATE_BROWSING;
+                haptic_cancel();
 
-      } else if (g_state == STATE_WARNING) {
-        printf(">>> USER CANCELLED WARNING <<<\n");
-        g_state = STATE_BROWSING;
-        haptic_cancel();
+            } else if (g_state == STATE_WARNING) {
+                printf(">>> USER CANCELLED WARNING <<<\n");
+                g_state = STATE_BROWSING;
+                haptic_cancel();
 
-      } else { // STATE_BROWSING
-        update_selection((int *)&g_selection);
-        printf("Selected: %s\n", action_names[g_selection]);
-        haptic_tick();
-      }
-      last_move_time = now;
+            } else { // STATE_BROWSING
+                update_selection((int *)&g_selection);
+                printf("Selected: %s\n", action_names[g_selection]);
+                haptic_tick();
+            }
+            last_move_time = now;
+        }
+
+        if (g_state == STATE_BROWSING) {
+            if ((now - last_move_time) >= IDLE_TIMEOUT_US) {
+                g_state = STATE_WARNING;
+                warning_start_us = now;
+                printf("WARNING: %s will fire in %.1f s\n",
+                       action_names[g_selection],
+                       WARNING_DURATION_US / 1000000.0f);
+                haptic_warning();
+            }
+
+        } else if (g_state == STATE_WARNING) {
+            if ((now - warning_start_us) >= WARNING_DURATION_US) {
+                printf("EXECUTE: %s\n", action_names[g_selection]);
+                g_state = STATE_RUNNING;
+                haptic_confirm();
+                start_action(g_selection);
+            }
+
+        } else if (g_state == STATE_RUNNING) {
+            /* If background task dies on its own, reset idle timer so
+               we don't immediately warn again. */
+            if (g_action_task == NULL) {
+                g_state = STATE_BROWSING;
+                last_move_time = now;
+                motor_off();
+            }
+        }
+
+        g_last_ball = ball_value;
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
-
-    if (g_state == STATE_BROWSING) {
-      if ((now - last_move_time) >= IDLE_TIMEOUT_US) {
-        g_state = STATE_WARNING;
-        warning_start_us = now;
-        printf("WARNING: %s will fire in %.1f s\n", action_names[g_selection],
-               WARNING_DURATION_US / 1000000.0f);
-        haptic_warning();
-      }
-
-    } else if (g_state == STATE_WARNING) {
-      if ((now - warning_start_us) >= WARNING_DURATION_US) {
-        printf("EXECUTE: %s\n", action_names[g_selection]);
-        g_state = STATE_RUNNING;
-        haptic_confirm();
-        start_action(g_selection);
-      }
-
-    } else if (g_state == STATE_RUNNING) {
-      /* If background task dies on its own, reset idle timer so
-         we don't immediately warn again. */
-      if (g_action_task == NULL) {
-        g_state = STATE_BROWSING;
-        last_move_time = now;
-        motor_off();
-      }
-    }
-
-    g_last_ball = ball_value;
-    vTaskDelay(pdMS_TO_TICKS(50));
-  }
 }

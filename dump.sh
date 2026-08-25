@@ -1,0 +1,15 @@
+find . -type f \
+  -not -path '*/\.*' \
+  -not -path '*/node_modules/*' \
+  -not -path '*/venv/*' \
+  -not -path '*/__pycache__/*' \
+  -not -path '*/dist/*' \
+  -not -path '*/build/*' \
+  -not -path '*/target/*' \
+  -not -path '*/vendor/*' \
+  -not -path '*/.git/*' \
+  -not -name '*.png' -not -name '*.jpg' -not -name '*.jpeg' \
+  -not -name '*.gif' -not -name '*.ico' -not -name '*.pdf' \
+  -not -name '*.zip' -not -name '*.tar.gz' -not -name '*.exe' \
+  -not -name '*.dll' -not -name '*.so' -not -name '*.dylib' \
+  -exec sh -c 'echo "=== {} ===" && cat "{}" && echo ""' \; > project_dump.txt
