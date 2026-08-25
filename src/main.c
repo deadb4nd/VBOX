@@ -1,6 +1,5 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
-#include <ble_beacon.h>
 #include <driver/gpio.h>
 #include <esp_log.h>
 #include <esp_timer.h>
@@ -134,9 +133,9 @@ static void action_task_wrapper(void *pvParameters) {
         break;
 
     case ACTION_BLE_SPAM:
-        init_ble_beacon();
         printf("TASK: BLE INITIALIZED\n");
         printf("TASK: BLE spam loop running\n");
+        // TODO:
 
         while (!g_kill_action) {
             vTaskDelay(pdMS_TO_TICKS(50));
