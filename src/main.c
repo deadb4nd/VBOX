@@ -142,7 +142,6 @@ static void action_task_wrapper(void *pvParameters) {
         }
 
         printf("TASK: Stopping BLE spam sequence...\n");
-        stop_ble_beacon();
         break;
     case ACTION_FAKE_AP: {
         printf("TASK: Fake AP starting\n");
