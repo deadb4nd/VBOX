@@ -1,6 +1,7 @@
 #include "gap.h"
 #include "common.h"
 #include <stdint.h>
+#include <string.h>
 
 /* Private function declarations */
 inline static void format_addr(char *addr_str, uint8_t addr[]);
@@ -9,22 +10,13 @@ static void start_advertising(void);
 /* Private variables */
 static uint8_t own_addr_type;
 static uint8_t addr_val[6] = {0};
-static uint8_t esp_uri[] = {BLE_GAP_URI_PREFIX_HTTPS,
-                            '/',
-                            '/',
-                            'e',
-                            's',
-                            'p',
-                            'r',
-                            'e',
-                            's',
-                            's',
-                            'i',
-                            'f',
-                            '.',
-                            'c',
-                            'o',
-                            'm'};
+
+// A list of names to spam. You can add anything you want here!
+static const char *spam_names[] = {"iPhone 15 Pro",   "Tesla Model 3",
+                                   "Sony WH-1000XM4", "Samsung Smart Fridge",
+                                   "Flippers Zero",   "AirPods Pro"};
+#define NUM_SPAM_NAMES (sizeof(spam_names) / sizeof(spam_names[0]))
+static size_t current_name_index = 0;
 
 /* Private functions */
 inline static void format_addr(char *addr_str, uint8_t addr[]) {
@@ -32,121 +24,102 @@ inline static void format_addr(char *addr_str, uint8_t addr[]) {
             addr[2], addr[3], addr[4], addr[5]);
 }
 
+// Event handler required to catch when the brief advertisement window finishes
+static int ble_gap_event_handler(struct ble_gap_event *event, void *arg) {
+    if (event->type == BLE_GAP_EVENT_ADV_COMPLETE) {
+        // The 100ms window finished! Cycle to the next name and fire again.
+        current_name_index = (current_name_index + 1) % NUM_SPAM_NAMES;
+        start_advertising();
+    }
+    return 0;
+}
+
 static void start_advertising(void) {
-    /* Local variables */
     int rc = 0;
-    const char *name;
     struct ble_hs_adv_fields adv_fields = {0};
-    struct ble_hs_adv_fields rsp_fields = {0};
     struct ble_gap_adv_params adv_params = {0};
 
     /* Set advertising flags */
     adv_fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
 
-    /* Set device name */
-    name = ble_svc_gap_device_name();
+    /* DYNAMIC SPAM: Fetch the current name from our cycling list */
+    const char *name = spam_names[current_name_index];
     adv_fields.name = (uint8_t *)name;
     adv_fields.name_len = strlen(name);
     adv_fields.name_is_complete = 1;
 
-    /* Set device tx power */
+    /* Set device metadata flags */
     adv_fields.tx_pwr_lvl = BLE_HS_ADV_TX_PWR_LVL_AUTO;
     adv_fields.tx_pwr_lvl_is_present = 1;
-
-    /* Set device appearance */
     adv_fields.appearance = BLE_GAP_APPEARANCE_GENERIC_TAG;
     adv_fields.appearance_is_present = 1;
-
-    /* Set device LE role */
     adv_fields.le_role = BLE_GAP_LE_ROLE_PERIPHERAL;
     adv_fields.le_role_is_present = 1;
 
-    /* Set advertisement fields */
+    /* Update active fields in the NimBLE Host */
     rc = ble_gap_adv_set_fields(&adv_fields);
     if (rc != 0) {
         ESP_LOGE(TAG, "failed to set advertising data, error code: %d", rc);
         return;
     }
 
-    /* Set device address */
-    rsp_fields.device_addr = addr_val;
-    rsp_fields.device_addr_type = own_addr_type;
-    rsp_fields.device_addr_is_present = 1;
-
-    /* Set URI */
-    rsp_fields.uri = esp_uri;
-    rsp_fields.uri_len = sizeof(esp_uri);
-
-    /* Set scan response fields */
-    rc = ble_gap_adv_rsp_set_fields(&rsp_fields);
-    if (rc != 0) {
-        ESP_LOGE(TAG, "failed to set scan response data, error code: %d", rc);
-        return;
-    }
-
-    /* Set non-connectable and general discoverable mode to be a beacon */
+    /* Set connection configurations */
     adv_params.conn_mode = BLE_GAP_CONN_MODE_NON;
     adv_params.disc_mode = BLE_GAP_DISC_MODE_GEN;
 
-    /* Start advertising */
-    rc = ble_gap_adv_start(own_addr_type, NULL, BLE_HS_FOREVER, &adv_params,
-                           NULL, NULL);
+    /*
+     * CRITICAL CHANGE: Instead of BLE_HS_FOREVER, we advertise for 100ms
+     * duration. When 100ms finishes, it will trigger the event handler above to
+     * swap names.
+     */
+    rc = ble_gap_adv_start(own_addr_type, NULL, 100, &adv_params,
+                           ble_gap_event_handler, NULL);
     if (rc != 0) {
-        ESP_LOGE(TAG, "failed to start advertising, error code: %d", rc);
+        // If it throws an error because the radio is busy, retry in the next
+        // cycle
         return;
     }
-    ESP_LOGI(TAG, "advertising started!");
 }
 
 /* Public functions */
 void adv_init(void) {
-    /* Local variables */
     int rc = 0;
     char addr_str[18] = {0};
 
-    /* Make sure we have proper BT identity address set */
     rc = ble_hs_util_ensure_addr(0);
     if (rc != 0) {
         ESP_LOGE(TAG, "device does not have any available bt address!");
         return;
     }
 
-    /* Figure out BT address to use while advertising */
     rc = ble_hs_id_infer_auto(0, &own_addr_type);
     if (rc != 0) {
         ESP_LOGE(TAG, "failed to infer address type, error code: %d", rc);
         return;
     }
 
-    /* Copy device address to addr_val */
     rc = ble_hs_id_copy_addr(own_addr_type, addr_val, NULL);
     if (rc != 0) {
         ESP_LOGE(TAG, "failed to copy device address, error code: %d", rc);
         return;
     }
     format_addr(addr_str, addr_val);
-    ESP_LOGI(TAG, "device address: %s", addr_str);
+    ESP_LOGI(TAG, "device physical address: %s", addr_str);
 
-    /* Start advertising. */
+    /* Kick off the self-repeating spam chain */
     start_advertising();
 }
 
 int gap_init(void) {
-    /* Local variables */
     int rc = 0;
-
-    /* Initialize GAP service */
     ble_svc_gap_init();
 
-    /* Set GAP device name */
     rc = ble_svc_gap_device_name_set(DEVICE_NAME);
     if (rc != 0) {
-        ESP_LOGE(TAG, "failed to set device name to %s, error code: %d",
-                 DEVICE_NAME, rc);
+        ESP_LOGE(TAG, "failed to set device name, error code: %d", rc);
         return rc;
     }
 
-    /* Set GAP device appearance */
     rc = ble_svc_gap_device_appearance_set(BLE_GAP_APPEARANCE_GENERIC_TAG);
     if (rc != 0) {
         ESP_LOGE(TAG, "failed to set device appearance, error code: %d", rc);

@@ -1,3 +1,5 @@
+#include "esp_heap_caps.h"
+#include "esp_log.h"
 #include <ble_beacon.h>
 #include <driver/gpio.h>
 #include <esp_log.h>
@@ -7,6 +9,14 @@
 #include <freertos/task.h>
 #include <stdbool.h>
 #include <stdint.h>
+
+void log_memory_usage() {
+    uint32_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+    uint32_t min_free = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+    ESP_LOGI("MEM",
+             "Free Heap: %lu bytes | Lowest Historical Free Peak: %lu bytes",
+             free_heap, min_free);
+}
 
 #define MOTOR_GPIO GPIO_NUM_2
 #define BALL_BTN GPIO_NUM_21
@@ -127,11 +137,14 @@ static void action_task_wrapper(void *pvParameters) {
         init_ble_beacon();
         printf("TASK: BLE INITIALIZED\n");
         printf("TASK: BLE spam loop running\n");
+
         while (!g_kill_action) {
             vTaskDelay(pdMS_TO_TICKS(50));
         }
-        break;
 
+        printf("TASK: Stopping BLE spam sequence...\n");
+        stop_ble_beacon();
+        break;
     case ACTION_FAKE_AP: {
         printf("TASK: Fake AP starting\n");
         ap_config_t config = {
@@ -173,6 +186,7 @@ static void cancel_current_action(void) {
 }
 
 void app_main(void) {
+    log_memory_usage();
     configure_external_antenna(); // NEVER REMOVE
 
     gpio_config_t motor_conf = {

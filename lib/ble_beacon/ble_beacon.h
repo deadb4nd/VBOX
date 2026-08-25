@@ -9,4 +9,12 @@
  */
 void init_ble_beacon(void);
 
-#endif
+/**
+ * @brief Stop the BLE beacon and power down the radio.
+ *
+ * Stops the NimBLE port and deinitializes it, cleanly shutting down
+ * the BLE stack.
+ */
+void stop_ble_beacon(void);
+
+#endif // BLE_BEACON_H
