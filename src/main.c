@@ -1,13 +1,21 @@
-#include "esp_heap_caps.h"
-#include "esp_log.h"
+#include "ble_spam.h"
 #include <driver/gpio.h>
+#include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_timer.h>
-#include <fakeap.h>
+#include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <nvs_flash.h>
 #include <stdbool.h>
 #include <stdint.h>
+
+#include "ap_utils.h"
+#include "fakeap.h"
+#include "logic.h"
+#include "ssids.h"
+
+static void cancel_current_action(void);
 
 void log_memory_usage() {
     uint32_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
@@ -20,9 +28,8 @@ void log_memory_usage() {
 #define MOTOR_GPIO GPIO_NUM_2
 #define BALL_BTN GPIO_NUM_21
 
-#define IDLE_TIMEOUT_US (1500 * 1000)     // 1.5 s quiet -> warning
-#define WARNING_DURATION_US (2000 * 1000) // 2 s heads-up before it fires
-#define DEBOUNCE_US 200000
+#define IDLE_TIMEOUT_US (1500 * 1000)     // 1.5 s
+#define WARNING_DURATION_US (2000 * 1000) // 2.0 s
 
 static const char *TAG = "VELO_BOX";
 
@@ -99,24 +106,6 @@ static sys_state_t g_state = STATE_BROWSING;
 static action_t g_selection = ACTION_WIFI_DEAUTH;
 static int g_last_ball = 0;
 
-static int64_t last_accepted_us = 0;
-
-static bool has_ball_moved(int ball_value, int last_value) {
-    if (ball_value == last_value)
-        return false;
-    int64_t now = esp_timer_get_time();
-    if ((now - last_accepted_us) < DEBOUNCE_US)
-        return false;
-    last_accepted_us = now;
-    return true;
-}
-
-static void update_selection(int *sel) {
-    *sel += 1;
-    if (*sel >= ACTION_COUNT)
-        *sel = 0;
-}
-
 static TaskHandle_t g_action_task = NULL;
 static volatile bool g_kill_action = false;
 
@@ -133,16 +122,15 @@ static void action_task_wrapper(void *pvParameters) {
         break;
 
     case ACTION_BLE_SPAM:
-        printf("TASK: BLE INITIALIZED\n");
         printf("TASK: BLE spam loop running\n");
-        // TODO:
-
         while (!g_kill_action) {
-            vTaskDelay(pdMS_TO_TICKS(50));
+            ble_spam_run_once();
+            vTaskDelay(pdMS_TO_TICKS(100));
         }
-
+        ble_spam_stop();
         printf("TASK: Stopping BLE spam sequence...\n");
         break;
+
     case ACTION_FAKE_AP: {
         printf("TASK: Fake AP starting\n");
         ap_config_t config = {
@@ -150,7 +138,19 @@ static void action_task_wrapper(void *pvParameters) {
             .MAX_CONNECTIONS = 4,
             .WIFI_CHANNEL = 2,
         };
-        create_fake_ap(config);
+        create_config(&config);
+
+        int ssids_len = count_ssids(CUSTOM_SSIDS);
+        while (!g_kill_action) {
+            for (int i = 0; i < ssids_len; i++) {
+                if (g_kill_action)
+                    break;
+                ap_run(config, CUSTOM_SSIDS[i]);
+                vTaskDelay(pdMS_TO_TICKS(100));
+            }
+        }
+        printf("TASK: Stopping Fake AP sequence...\n");
+        esp_wifi_stop();
         break;
     }
 
@@ -163,6 +163,9 @@ static void action_task_wrapper(void *pvParameters) {
 }
 
 static void start_action(action_t action) {
+    if (g_action_task != NULL) {
+        cancel_current_action();
+    }
     g_kill_action = false;
     xTaskCreate(action_task_wrapper, "action", 4096, (void *)(intptr_t)action,
                 5, &g_action_task);
@@ -180,12 +183,27 @@ static void cancel_current_action(void) {
             g_action_task = NULL;
         }
     }
+    if (g_selection == ACTION_FAKE_AP) {
+        esp_wifi_stop();
+    }
     motor_off();
 }
 
 void app_main(void) {
     log_memory_usage();
     configure_external_antenna(); // NEVER REMOVE
+
+    /* One-time NVS init (needed by WiFi) */
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
+        ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    init_ap();
+    ble_spam_init();
 
     gpio_config_t motor_conf = {
         .pin_bit_mask = (1ULL << MOTOR_GPIO),
@@ -230,7 +248,7 @@ void app_main(void) {
                 haptic_cancel();
 
             } else { // STATE_BROWSING
-                update_selection((int *)&g_selection);
+                update((int *)&g_selection);
                 printf("Selected: %s\n", action_names[g_selection]);
                 haptic_tick();
             }
