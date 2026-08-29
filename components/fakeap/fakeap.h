@@ -1,12 +1,31 @@
-#ifndef _FAKEAP_H_
-#define _FAKEAP_H_
-#include <ap_config.h>
+#ifndef FAKEAP_H
+#define FAKEAP_H
 
-void create_fake_ap(ap_config_t config);
+#include <stdbool.h>
+#include <stdint.h>
 
-void create_config(ap_config_t *config);
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-void init_ap();
+typedef struct {
+    uint8_t SSID[32];
+    uint8_t PASSWORD[64];
+    uint8_t WIFI_CHANNEL;
+    uint8_t MAX_CONNECTIONS;
+} ap_config_t;
+
+/* your existing globals */
+extern volatile bool g_kill_action;
+extern char *CUSTOM_SSIDS[];
+
+void init_ap(void);
 void ap_run(ap_config_t config, const char *ssid);
+void create_config(ap_config_t *config);
+int count_ssids(char **ssids);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

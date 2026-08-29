@@ -107,7 +107,7 @@ static action_t g_selection = ACTION_WIFI_DEAUTH;
 static int g_last_ball = 0;
 
 static TaskHandle_t g_action_task = NULL;
-static volatile bool g_kill_action = false;
+volatile bool g_kill_action = false;
 
 static void action_task_wrapper(void *pvParameters) {
     action_t action = (action_t)(intptr_t)pvParameters;
@@ -133,6 +133,7 @@ static void action_task_wrapper(void *pvParameters) {
 
     case ACTION_FAKE_AP: {
         printf("TASK: Fake AP starting\n");
+
         ap_config_t config = {
             .SSID = "HELLO",
             .MAX_CONNECTIONS = 4,
@@ -146,14 +147,14 @@ static void action_task_wrapper(void *pvParameters) {
                 if (g_kill_action)
                     break;
                 ap_run(config, CUSTOM_SSIDS[i]);
-                vTaskDelay(pdMS_TO_TICKS(100));
+                vTaskDelay(pdMS_TO_TICKS(10));
             }
         }
+
         printf("TASK: Stopping Fake AP sequence...\n");
         esp_wifi_stop();
         break;
     }
-
     default:
         break;
     }
