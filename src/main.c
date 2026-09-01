@@ -15,7 +15,40 @@
 #include "logic.h"
 #include "ssids.h"
 
+#define LED_GPIO GPIO_NUM_15    // XIAO ESP32C6 built-in LED (active LOW)
+#define BUZZER_GPIO GPIO_NUM_10 // <-- change to your buzzer pin
+
 static void cancel_current_action(void);
+
+static void led_init(void) {
+    gpio_config_t led_conf = {
+        .pin_bit_mask = (1ULL << LED_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&led_conf);
+    gpio_set_level(LED_GPIO, 1); // LED off by default (active LOW)
+}
+
+static void led_on(void) { gpio_set_level(LED_GPIO, 0); } // active LOW
+static void led_off(void) { gpio_set_level(LED_GPIO, 1); }
+
+static void buzzer_init(void) {
+    gpio_config_t buzzer_conf = {
+        .pin_bit_mask = (1ULL << BUZZER_GPIO),
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&buzzer_conf);
+    gpio_set_level(BUZZER_GPIO, 0); // buzzer off by default
+}
+
+static void buzzer_on(void) { gpio_set_level(BUZZER_GPIO, 1); }
+static void buzzer_off(void) { gpio_set_level(BUZZER_GPIO, 0); }
 
 void log_memory_usage() {
     uint32_t free_heap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
@@ -121,11 +154,20 @@ static void action_task_wrapper(void *pvParameters) {
         }
         break;
 
+    // case ACTION_BLE_SPAM:
+    //     printf("TASK: BLE spam loop running\n");
+    //     while (!g_kill_action) {
+    //         // ble_spam_run_once();
+    //         vTaskDelay(pdMS_TO_TICKS(100));
+    //     }
+    //     ble_spam_stop();
+    //     printf("TASK: Stopping BLE spam sequence...\n");
+    //     break;
     case ACTION_BLE_SPAM:
-        printf("TASK: BLE spam loop running\n");
+        printf("TASK: BLE kitchen-sink spam running\n");
         while (!g_kill_action) {
-            ble_spam_run_once();
-            vTaskDelay(pdMS_TO_TICKS(100));
+            ble_spam_kitchen_sink_run_once();
+            vTaskDelay(pdMS_TO_TICKS(150)); /* rotate payload every 150 ms */
         }
         ble_spam_stop();
         printf("TASK: Stopping BLE spam sequence...\n");
@@ -188,11 +230,15 @@ static void cancel_current_action(void) {
         esp_wifi_stop();
     }
     motor_off();
+    led_off();
+    buzzer_off();
 }
 
 void app_main(void) {
     log_memory_usage();
     configure_external_antenna(); // NEVER REMOVE
+    led_init();
+    buzzer_init();
 
     /* One-time NVS init (needed by WiFi) */
     esp_err_t ret = nvs_flash_init();
@@ -227,6 +273,9 @@ void app_main(void) {
 
     int64_t last_move_time = esp_timer_get_time();
     int64_t warning_start_us = 0;
+
+    static sys_state_t g_last_led_state = 0xFF;
+    static int g_led_tick = 0;
 
     haptic_startup();
     ESP_LOGI(TAG, "Ready. Roll ball to browse.");
@@ -282,6 +331,37 @@ void app_main(void) {
                 last_move_time = now;
                 motor_off();
             }
+        }
+
+        if (g_state != g_last_led_state) {
+            g_last_led_state = g_state;
+            g_led_tick = 0;
+        }
+        g_led_tick++;
+
+        switch (g_state) {
+        case STATE_BROWSING:
+            led_off();
+            buzzer_off();
+            break;
+        case STATE_WARNING:
+            if ((g_led_tick % 20) < 10) {
+                led_on();
+                buzzer_on();
+            } else {
+                led_off();
+                buzzer_off();
+            }
+            break;
+        case STATE_RUNNING:
+            if ((g_led_tick % 4) < 2) {
+                led_on();
+                buzzer_on();
+            } else {
+                led_off();
+                buzzer_off();
+            }
+            break;
         }
 
         g_last_ball = ball_value;
