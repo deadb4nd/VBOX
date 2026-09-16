@@ -29,6 +29,8 @@ typedef struct {
     uint8_t sta[6];
     uint8_t msgs;       /* HARVEST_MSG_* bitset */
     uint32_t first_ms;  /* when the pair was first seen */
+    bool has_pmkid;     /* PMKID present in a seen M1 */
+    uint8_t pmkid[16];
 } harvest_pair_t;
 
 typedef struct {
@@ -53,6 +55,13 @@ uint32_t harvest_frame_count(void); /* frames queued for the pcap */
 /* A pair carries a usable handshake when we hold one side's nonce (M1 or M3)
    and a MIC frame (M2 or M4). That is enough for offline PMK derivation. */
 bool harvest_pair_ready(const harvest_pair_t *p);
+
+/* True when we saw an M1 whose key data carried a PMKID KDE. A PMKID from
+   the AP is independent of any client, so with an active probe this is a
+   clientless path to the PSK hashset. */
+static inline bool harvest_pair_has_pmkid(const harvest_pair_t *p) {
+    return p != NULL && p->has_pmkid;
+}
 
 /* Build the whole capture as a pcap into `buf`. Returns bytes written, or 0
    when nothing captured / buffer too small. */

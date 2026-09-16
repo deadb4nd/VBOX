@@ -200,6 +200,8 @@ async function renderRecon() {
       `<td class="mono">${esc(c.ap)}</td>` +
       `<td class="mono">${esc(c.sta)}</td>` +
       `<td>${c.msgs}</td>` +
+      `<td class="${c.has_pmkid ? "ok" : ""}">` +
+      (c.has_pmkid ? "PMKID" : "-") + `</td>` +
       `<td class="${c.ready ? "ok" : ""}">${c.ready ? "READY" : "-"}</td>`;
     capBody.appendChild(tr);
   });

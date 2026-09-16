@@ -52,7 +52,10 @@ Three taps on your phone:
 - 42 native tests, ESP-IDF 6 firmware, phone web UI
 
 ### V2 — "Complete the Kill Chain"
-- **PMKID capture** — send EAPOL Start to AP, extract PMKID from M1 (no client needed)
+- **PMKID capture** — *passive detection done* (harvest extracts the PMKID KDE
+  from any M1; displayed in the UI, cracks in hashcat `-m 22000`). *Active
+  clientless trigger* (send EAPOL Start to the AP via `esp_wifi_80211_tx`,
+  no client needed) pending on-hardware validation.
 - **Evil portal** — fake AP with captive portal for credential harvesting
 - **Capture persistence** — save `.pcap` files to SPIFFS/SPI flash, survive reboot
 - **BLE remote control** — drive the device over BLE instead of WiFi for total stealth (phone talks BLE, device stays hidden)

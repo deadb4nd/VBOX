@@ -14,20 +14,23 @@ static void put64(uint8_t *p, uint64_t v) {
     }
 }
 
-/* Build a QoS/plain data frame carrying one EAPOL-Key message.
+/* Build a strengthen QoS/plain data frame carrying one EAPOL-Key message.
    `from_ap`: true -> FromDS (AP->client, M1/M3), false -> ToDS (M2/M4).
-   key_info carries the wire-order little-endian Key Information. */
+   key_info carries the wire-order little-endian Key Information.
+   Optional trailing `kd` bytes are appended as EAPOL key data. The frame is
+   byte-exact to the 802.11i wire format (real AP traffic), so the parser stays
+   honest. Returns total frame length. */
 static int eapol_frame(uint8_t *f, bool from_ap, uint16_t key_info,
-                       uint64_t replay) {
-    memset(f, 0, 128);
+                       uint64_t replay, const uint8_t *kd, uint16_t kdlen) {
+    memset(f, 0, 256);
     /* 802.11 data header */
     f[0] = 0x08;
     f[1] = from_ap ? 0x02 /* FromDS */ : 0x01 /* ToDS */;
     if (from_ap) {
-        memcpy(&f[4], client, 6); /* addr1 = DA */
-        memcpy(&f[10], bssid, 6); /* addr2 = SA */
+        memcpy(&f[4], client, 6);  /* addr1 = DA */
+        memcpy(&f[10], bssid, 6);  /* addr2 = SA */
     } else {
-        memcpy(&f[4], bssid, 6);  /* addr1 = RA */
+        memcpy(&f[4], bssid, 6);   /* addr1 = RA */
         memcpy(&f[10], client, 6); /* addr2 = SA */
     }
     memcpy(&f[16], bssid, 6); /* addr3 = BSSID */
@@ -38,11 +41,15 @@ static int eapol_frame(uint8_t *f, bool from_ap, uint16_t key_info,
     memcpy(&f[24], llc, 8);
 
     int p = 32; /* EAPOL header */
-    f[p] = 3;   /* EAPOL version */
+    f[p] = 2;   /* EAPOL version */
     f[p + 1] = 3;
     p += 4; /* length patched below */
 
-    /* key descriptor */
+    /* key descriptor: version, RSN type, then Key Information (LE) */
+    f[p] = 0x02;     /* descriptor version 2 (CCMP/WPA2) */
+    f[p + 1] = 0x00;
+    f[p + 2] = 254;  /* descriptor type: EAPOL RSN Key */
+    p += 3;
     f[p] = (uint8_t)(key_info & 0xff);
     f[p + 1] = (uint8_t)(key_info >> 8);
     p += 2;
@@ -57,13 +64,18 @@ static int eapol_frame(uint8_t *f, bool from_ap, uint16_t key_info,
     p += 8;  /* rsc */
     p += 8;  /* id */
     p += 16; /* mic */
-    uint16_t kdlen = 0;
-    f[p] = (uint8_t)(kdlen & 0xff);
-    f[p + 1] = (uint8_t)(kdlen >> 8);
+    uint16_t kdlenw = kdlen;
+    f[p] = (uint8_t)(kdlenw & 0xff);
+    f[p + 1] = (uint8_t)(kdlenw >> 8);
     p += 2;
 
-    uint16_t eapol_len = (uint16_t)(p - 32);
-    f[34] = (uint8_t)(eapol_len >> 8); /* EAPOL length */
+    if (kdlen && kd) {
+        memcpy(&f[p], kd, kdlen);
+        p += kdlen;
+    }
+
+    uint16_t eapol_len = (uint16_t)(p - 36); /* bytes after the EAPOL hdr */
+    f[34] = (uint8_t)(eapol_len >> 8);
     f[35] = (uint8_t)(eapol_len & 0xff);
     return p;
 }
@@ -78,16 +90,16 @@ void setUp(void) { harvest_reset(); }
 void tearDown(void) {}
 
 void test_full_handshake_captured(void) {
-    uint8_t f[128];
+    uint8_t f[256];
     int len;
 
-    len = eapol_frame(f, true, M1, 1);
+    len = eapol_frame(f, true, M1, 1, NULL, 0);
     harvest_feed(f, (uint32_t)len, 6);
-    len = eapol_frame(f, false, M2, 2);
+    len = eapol_frame(f, false, M2, 2, NULL, 0);
     harvest_feed(f, (uint32_t)len, 6);
-    len = eapol_frame(f, true, M3, 3);
+    len = eapol_frame(f, true, M3, 3, NULL, 0);
     harvest_feed(f, (uint32_t)len, 6);
-    len = eapol_frame(f, false, M4, 4);
+    len = eapol_frame(f, false, M4, 4, NULL, 0);
     harvest_feed(f, (uint32_t)len, 6);
 
     TEST_ASSERT_EQUAL_UINT32(1, harvest_pair_count());
@@ -104,15 +116,15 @@ void test_full_handshake_captured(void) {
 }
 
 void test_second_client_tracked_separately(void) {
-    uint8_t f[128];
-    int len = eapol_frame(f, true, M1, 1);
+    uint8_t f[256];
+    int len = eapol_frame(f, true, M1, 1, NULL, 0);
     harvest_feed(f, (uint32_t)len, 6);
-    len = eapol_frame(f, false, M2, 2);
+    len = eapol_frame(f, false, M2, 2, NULL, 0);
     harvest_feed(f, (uint32_t)len, 6);
 
     /* second client, M1 only */
-    uint8_t g[128];
-    int glen = eapol_frame(g, true, M1, 1);
+    uint8_t g[256];
+    int glen = eapol_frame(g, true, M1, 1, NULL, 0);
     /* retarget the frame to client2 */
     memcpy(&g[4], client2, 6);
     memcpy(&g[10], bssid, 6);
@@ -123,8 +135,8 @@ void test_second_client_tracked_separately(void) {
 }
 
 void test_duplicate_frames_ignored(void) {
-    uint8_t f[128];
-    int len = eapol_frame(f, true, M1, 7);
+    uint8_t f[256];
+    int len = eapol_frame(f, true, M1, 7, NULL, 0);
     harvest_feed(f, (uint32_t)len, 6);
     harvest_feed(f, (uint32_t)len, 6); /* same replay, same pair, same msg */
 
@@ -133,8 +145,8 @@ void test_duplicate_frames_ignored(void) {
 }
 
 void test_group_key_ignored(void) {
-    uint8_t f[128];
-    int len = eapol_frame(f, true, 0x0080u | 0x0002u, 1); /* no pairwise bit */
+    uint8_t f[256];
+    int len = eapol_frame(f, true, 0x0080u | 0x0002u, 1, NULL, 0); /* no pairwise bit */
     harvest_feed(f, (uint32_t)len, 6);
 
     TEST_ASSERT_EQUAL_UINT32(0, harvest_pair_count());
@@ -142,8 +154,8 @@ void test_group_key_ignored(void) {
 }
 
 void test_non_eapol_and_junk_ignored(void) {
-    uint8_t f[128];
-    int len = eapol_frame(f, true, M1, 1);
+    uint8_t f[256];
+    int len = eapol_frame(f, true, M1, 1, NULL, 0);
     f[30] = 0x09; /* corrupt EtherType: not 0x88 0x8e */
     harvest_feed(f, (uint32_t)len, 6);
 
@@ -161,27 +173,27 @@ void test_non_eapol_and_junk_ignored(void) {
 }
 
 void test_m2_alone_marks_client_then_m1_completes(void) {
-    uint8_t f[128];
-    int len = eapol_frame(f, false, M2, 2);
+    uint8_t f[256];
+    int len = eapol_frame(f, false, M2, 2, NULL, 0);
     harvest_feed(f, (uint32_t)len, 1);
     TEST_ASSERT_EQUAL_UINT32(1, harvest_pair_count());
     TEST_ASSERT_EQUAL_UINT32(0, harvest_ready_count()); /* mid-handshake */
 
-    len = eapol_frame(f, true, M1, 1);
+    len = eapol_frame(f, true, M1, 1, NULL, 0);
     harvest_feed(f, (uint32_t)len, 1);
     TEST_ASSERT_EQUAL_UINT32(1, harvest_ready_count());
 }
 
 void test_pcap_export(void) {
-    uint8_t f[128];
-    int len = eapol_frame(f, true, M1, 1);
+    uint8_t f[256];
+    int len = eapol_frame(f, true, M1, 1, NULL, 0);
     harvest_feed(f, (uint32_t)len, 6);
-    len = eapol_frame(f, false, M2, 2);
+    len = eapol_frame(f, false, M2, 2, NULL, 0);
     harvest_feed(f, (uint32_t)len, 6);
 
     size_t need = harvest_pcap_size();
-    /* 802.11 hdr 24 + LLC 8 + EAPOL hdr 4 + descriptor 94 = 130 B/frame */
-    TEST_ASSERT_EQUAL_UINT32(24 + 2 * (16 + 130), need);
+    /* 802.11 hdr 24 + LLC 8 + EAPOL hdr 4 + descriptor 97 = 133 B/frame */
+    TEST_ASSERT_EQUAL_UINT32(24 + 2 * (16 + 133), need);
 
     uint8_t buf[2048];
     size_t wrote = harvest_build_pcap(buf, sizeof(buf));
@@ -204,9 +216,54 @@ void test_pcap_export(void) {
     TEST_ASSERT_EQUAL_UINT32(0, harvest_build_pcap(buf, 10));
 }
 
+void test_pmkid_parsed_from_m1_key_data(void) {
+    static const uint8_t kde_body[22] = {
+        0xdd, 0x14, 0x00, 0x0f, 0xac, 0x04, /* PMKID KDE */
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x01,
+    };
+    uint8_t f[256];
+    int len = eapol_frame(f, true, M1, 1, kde_body,
+                          sizeof(kde_body)); /* 133 + 22 = 155 B */
+    harvest_feed(f, (uint32_t)len, 6);
+
+    TEST_ASSERT_EQUAL_UINT32(1, harvest_pair_count());
+    harvest_pair_t p;
+    TEST_ASSERT_TRUE(harvest_pair_get(0, &p));
+    TEST_ASSERT_TRUE(harvest_pair_has_pmkid(&p));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(&kde_body[6], p.pmkid, 16);
+}
+
+void test_pmkid_absent_without_kde(void) {
+    uint8_t f[256];
+    int len = eapol_frame(f, true, M1, 1, NULL, 0);
+    harvest_feed(f, (uint32_t)len, 6);
+    len = eapol_frame(f, false, M2, 2, NULL, 0);
+    harvest_feed(f, (uint32_t)len, 6);
+
+    harvest_pair_t p;
+    TEST_ASSERT_TRUE(harvest_pair_get(0, &p));
+    TEST_ASSERT_FALSE(harvest_pair_has_pmkid(&p));
+    TEST_ASSERT_TRUE(harvest_pair_ready(&p));
+}
+
+void test_pmkid_not_stolen_from_non_pairwise_data(void) {
+    /* A mixed key-data blob that contains the KDE signature but rides in a
+       group-key frame must not mark the pair. */
+    static const uint8_t kde_body[22] = {
+        0xdd, 0x14, 0x00, 0x0f, 0xac, 0x04,
+        0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+        0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb,
+    };
+    uint8_t f[256];
+    int len = eapol_frame(f, true, 0x0080u | 0x0002u, 1, kde_body, 22);
+    harvest_feed(f, (uint32_t)len, 6);
+    TEST_ASSERT_EQUAL_UINT32(0, harvest_pair_count());
+}
+
 void test_reset_clears_everything(void) {
-    uint8_t f[128];
-    int len = eapol_frame(f, true, M1, 1);
+    uint8_t f[256];
+    int len = eapol_frame(f, true, M1, 1, NULL, 0);
     harvest_feed(f, (uint32_t)len, 6);
 
     harvest_reset();
@@ -225,6 +282,9 @@ int main(void) {
     RUN_TEST(test_non_eapol_and_junk_ignored);
     RUN_TEST(test_m2_alone_marks_client_then_m1_completes);
     RUN_TEST(test_pcap_export);
+    RUN_TEST(test_pmkid_parsed_from_m1_key_data);
+    RUN_TEST(test_pmkid_absent_without_kde);
+    RUN_TEST(test_pmkid_not_stolen_from_non_pairwise_data);
     RUN_TEST(test_reset_clears_everything);
     return UNITY_END();
 }

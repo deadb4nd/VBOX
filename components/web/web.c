@@ -449,6 +449,13 @@ static void mac_to_hex(char *out, const uint8_t m[6]) {
              m[3], m[4], m[5]);
 }
 
+static void bytes_to_hex(char *out, const uint8_t *b, size_t n) {
+    out[0] = '\0';
+    for (size_t i = 0; i < n; i++) {
+        snprintf(out + i * 2, 3, "%02x", b[i]);
+    }
+}
+
 static esp_err_t handler_api_scan(httpd_req_t *req) {
     /* JSON is built into a heap buffer; device RAM is fine for a page
        of tables but the buffer is capped so a giant sky full of APs
@@ -532,18 +539,22 @@ static esp_err_t handler_api_scan(httpd_req_t *req) {
     comma = 0;
 
     recon_lock();
-    for (uint32_t i = 0; i < pair_n && p < end - 160; i++) {
+    for (uint32_t i = 0; i < pair_n && p < end - 200; i++) {
         harvest_pair_t hp;
         if (!harvest_pair_get(i, &hp)) {
             break;
         }
-        char hmac[18], hmac_sta[18];
+        char hmac[18], hmac_sta[18], pmkid[33] = "";
         mac_to_hex(hmac, hp.ap);
         mac_to_hex(hmac_sta, hp.sta);
+        bytes_to_hex(pmkid, hp.pmkid, 16);
         n = snprintf(p, (size_t)(end - p), "%s{\"ap\":\"%s\",\"sta\":\"%s\","
-                     "\"msgs\":%u,\"ready\":%s}",
+                     "\"msgs\":%u,\"ready\":%s,\"has_pmkid\":%s,"
+                     "\"pmkid\":\"%s\"}",
                      comma++ ? "," : "", hmac, hmac_sta, hp.msgs,
-                     harvest_pair_ready(&hp) ? "true" : "false");
+                     harvest_pair_ready(&hp) ? "true" : "false",
+                     hp.has_pmkid ? "true" : "false",
+                     hp.has_pmkid ? pmkid : "");
         if (n < 0 || p + n >= end) break;
         p += n;
     }
@@ -589,17 +600,20 @@ static esp_err_t handler_api_captures(httpd_req_t *req) {
                      (unsigned long)ready_n);
     p += n;
     uint32_t comma = 0;
-    for (uint32_t i = 0; i < pair_n && p < end - 160; i++) {
+    for (uint32_t i = 0; i < pair_n && p < end - 200; i++) {
         harvest_pair_t hp;
         if (!harvest_pair_get(i, &hp)) break;
-        char hmac[18], hmsta[18];
+        char hmac[18], hmsta[18], pmkid[33] = "";
         mac_to_hex(hmac, hp.ap);
         mac_to_hex(hmsta, hp.sta);
+        bytes_to_hex(pmkid, hp.pmkid, 16);
         n = snprintf(p, (size_t)(end - p), "%s{\"ap\":\"%s\",\"sta\":\"%s\","
-                     "\"msgs\":%u,\"ready\":%s,\"eapol\":%lu}",
+                     "\"msgs\":%u,\"ready\":%s,\"has_pmkid\":%s,"
+                     "\"pmkid\":\"%s\"}",
                      comma++ ? "," : "", hmac, hmsta, hp.msgs,
                      harvest_pair_ready(&hp) ? "true" : "false",
-                     (unsigned long)harvest_frame_count());
+                     hp.has_pmkid ? "true" : "false",
+                     hp.has_pmkid ? pmkid : "");
         if (n < 0 || p + n >= end) break;
         p += n;
     }
