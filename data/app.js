@@ -144,6 +144,17 @@ async function fireTargeted(apHex, clientHex) {
 $("clear-target").addEventListener("click", () =>
   $("target-chip").classList.add("hidden"));
 
+/* handshake harvest: clear the in-RAM capture log */
+$("clear-caps").addEventListener("click", async () => {
+  try {
+    await api("/api/captures/clear", { method: "POST" });
+    flash("Captures cleared", true);
+  } catch (e) {
+    flash(e.message || "Clear failed", false);
+  }
+  renderRecon();
+});
+
 /* ---------------- recon rendering ---------------- */
 
 function esc(s) {
@@ -175,6 +186,23 @@ async function renderRecon() {
   $("c-deauth").textContent = ctr.deauths || 0;
   $("c-eapol").textContent = ctr.eapol || 0;
   $("c-data").textContent = ctr.data || 0;
+
+  const hv = sc.harvest || {};
+  $("h-ready").textContent = hv.ready || 0;
+  $("h-pairs").textContent = hv.pairs || 0;
+  $("h-frames").textContent = hv.eapol_frames || 0;
+
+  const capBody = $("cap-table").querySelector("tbody");
+  capBody.innerHTML = "";
+  (sc.captures || []).forEach((c) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td class="mono">${esc(c.ap)}</td>` +
+      `<td class="mono">${esc(c.sta)}</td>` +
+      `<td>${c.msgs}</td>` +
+      `<td class="${c.ready ? "ok" : ""}">${c.ready ? "READY" : "-"}</td>`;
+    capBody.appendChild(tr);
+  });
 
   const apBody = $("ap-table").querySelector("tbody");
   apBody.innerHTML = "";

@@ -86,6 +86,33 @@
         <button id="clear-target" class="mini">clear</button>
       </div>
 
+      <div class="card harvest">
+        <h2>WPA handshake harvest</h2>
+        <div class="counters">
+          <span>ready <b id="h-ready">0</b></span>
+          <span>pairs <b id="h-pairs">0</b></span>
+          <span>eapol <b id="h-frames">0</b></span>
+        </div>
+        <div class="btn-grid func">
+          <a class="btn fn" id="dl-pcap" href="/api/captures/download"
+             download="capture.pcap">Download .pcap</a>
+          <button class="btn stop" id="clear-caps">Clear</button>
+        </div>
+        <p class="hint">Captured automatically during any scan, deauth or
+          probe flood. A "ready" pair (AP+client) 4-way handshake cracks
+          offline with aircrack-ng / hashcat.</p>
+          probe flood. A "ready" pair (AP+client) 4-way handshake cracks
+          offline with aircrack-ng / hashcat.</p>
+        <div class="table-wrap">
+          <table id="cap-table">
+            <thead>
+              <tr><th>AP</th><th>Client</th><th>Msgs</th><th>Ready</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
       <div class="card">
         <h2>Access points</h2>
         <div class="table-wrap">

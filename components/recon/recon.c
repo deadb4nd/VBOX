@@ -6,6 +6,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "harvest.h"
 #include <string.h>
 
 static const char *TAG = "RECON";
@@ -38,6 +39,10 @@ static void promisc_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
     if (xSemaphoreTake(s_mux, 0) == pdTRUE) {
         recon_core_parse(pkt->payload, len, pkt->rx_ctrl.channel,
                          (int8_t)pkt->rx_ctrl.rssi, now_ms);
+        /* Any promiscuous session (scan, deauth, probe flood) doubles as a
+           handshake trap: the EAPOL-Key frames land in harvest and are
+           ready to download once the pair completes. */
+        harvest_feed(pkt->payload, len, pkt->rx_ctrl.channel);
         xSemaphoreGive(s_mux);
     }
 }

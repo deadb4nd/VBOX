@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "esp_spiffs.h"
 #include "fakeap.h"
+#include "harvest.h"
 #include "recon.h"
 #include "settings.h"
 #include "settings_nvs.h"
@@ -274,14 +275,20 @@ static esp_err_t handler_api_status(httpd_req_t *req) {
 
     uint32_t free = heap_caps_get_free_size(MALLOC_CAP_8BIT);
     action_counters_t ctr = actions_counters();
+    recon_lock();
+    uint32_t handshakes = harvest_ready_count();
+    uint32_t frames = harvest_frame_count();
+    recon_unlock();
     char buf[256];
     snprintf(buf, sizeof(buf),
              "{\"running\":%s,\"idle\":%s,\"action\":\"%s\",\"label\":\"%s\","
              "\"deauth\":%lu,\"probes\":%lu,\"beacons\":%lu,"
+             "\"handshakes\":%lu,\"eapol_frames\":%lu,"
              "\"free_heap\":%lu}\n",
              running ? "true" : "false", idle ? "true" : "false",
              action_slug(cur), actions_name(cur), (unsigned long)ctr.deauth_sent,
              (unsigned long)ctr.probe_sent, (unsigned long)ctr.beacon_sent,
+             (unsigned long)handshakes, (unsigned long)frames,
              (unsigned long)free);
     return httpd_send_json(req, 200, buf);
 }
@@ -506,16 +513,41 @@ static esp_err_t handler_api_scan(httpd_req_t *req) {
 
     recon_lock();
     const recon_counters_t *ctr = recon_core_counters();
+    uint32_t ready_n = harvest_ready_count();
+    uint32_t pair_n = harvest_pair_count();
+    uint32_t frame_n = harvest_frame_count();
     n = snprintf(p, (size_t)(end - p),
                  "],\"counters\":{\"beacons\":%lu,\"probe_reqs\":%lu,"
                  "\"probe_resps\":%lu,\"deauths\":%lu,\"eapol\":%lu,"
-                 "\"data\":%lu},\"ble\":[",
+                 "\"data\":%lu},"
+                 "\"harvest\":{\"ready\":%lu,\"pairs\":%lu,"
+                 "\"eapol_frames\":%lu},\"captures\":[",
                  (unsigned long)ctr->beacons, (unsigned long)ctr->probe_reqs,
                  (unsigned long)ctr->probe_resps, (unsigned long)ctr->deauths,
-                 (unsigned long)ctr->eapol, (unsigned long)ctr->data);
+                 (unsigned long)ctr->eapol, (unsigned long)ctr->data,
+                 (unsigned long)ready_n, (unsigned long)pair_n,
+                 (unsigned long)frame_n);
     recon_unlock();
     p += n;
     comma = 0;
+
+    recon_lock();
+    for (uint32_t i = 0; i < pair_n && p < end - 160; i++) {
+        harvest_pair_t hp;
+        if (!harvest_pair_get(i, &hp)) {
+            break;
+        }
+        char hmac[18], hmac_sta[18];
+        mac_to_hex(hmac, hp.ap);
+        mac_to_hex(hmac_sta, hp.sta);
+        n = snprintf(p, (size_t)(end - p), "%s{\"ap\":\"%s\",\"sta\":\"%s\","
+                     "\"msgs\":%u,\"ready\":%s}",
+                     comma++ ? "," : "", hmac, hmac_sta, hp.msgs,
+                     harvest_pair_ready(&hp) ? "true" : "false");
+        if (n < 0 || p + n >= end) break;
+        p += n;
+    }
+    recon_unlock();
 
     ble_n = ble_scan_count();
     for (uint32_t i = 0; i < ble_n && p < end - 140; i++) {
@@ -538,6 +570,74 @@ static esp_err_t handler_api_scan(httpd_req_t *req) {
 
     httpd_send_json(req, 200, buf);
     heap_caps_free(buf);
+    return ESP_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Handshake harvest API                                             */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handler_api_captures(httpd_req_t *req) {
+    char buf[2048];
+    char *p = buf;
+    char *end = buf + sizeof(buf);
+
+    recon_lock();
+    uint32_t ready_n = harvest_ready_count();
+    uint32_t pair_n = harvest_pair_count();
+    int n = snprintf(p, (size_t)(end - p), "{\"ready\":%lu,\"pairs\":[",
+                     (unsigned long)ready_n);
+    p += n;
+    uint32_t comma = 0;
+    for (uint32_t i = 0; i < pair_n && p < end - 160; i++) {
+        harvest_pair_t hp;
+        if (!harvest_pair_get(i, &hp)) break;
+        char hmac[18], hmsta[18];
+        mac_to_hex(hmac, hp.ap);
+        mac_to_hex(hmsta, hp.sta);
+        n = snprintf(p, (size_t)(end - p), "%s{\"ap\":\"%s\",\"sta\":\"%s\","
+                     "\"msgs\":%u,\"ready\":%s,\"eapol\":%lu}",
+                     comma++ ? "," : "", hmac, hmsta, hp.msgs,
+                     harvest_pair_ready(&hp) ? "true" : "false",
+                     (unsigned long)harvest_frame_count());
+        if (n < 0 || p + n >= end) break;
+        p += n;
+    }
+    recon_unlock();
+    n = snprintf(p, (size_t)(end - p), "]}\n");
+    p += n;
+    return httpd_send_json(req, 200, buf);
+}
+
+static esp_err_t handler_api_captures_download(httpd_req_t *req) {
+    recon_lock();
+    size_t sz = harvest_pcap_size();
+    uint8_t *buf = sz ? heap_caps_malloc(sz, MALLOC_CAP_8BIT) : NULL;
+    size_t wrote = 0;
+    if (buf) {
+        wrote = harvest_build_pcap(buf, sz);
+    }
+    recon_unlock();
+
+    if (!buf) {
+        send_err(req, "nothing captured yet");
+        return ESP_OK;
+    }
+
+    httpd_resp_set_type(req, "application/vnd.tcpdump.pcap");
+    httpd_resp_set_hdr(req, "Content-Disposition",
+                       "attachment; filename=\"capture.pcap\"");
+    httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+    esp_err_t err = httpd_resp_send(req, (const char *)buf, wrote);
+    heap_caps_free(buf);
+    return err;
+}
+
+static esp_err_t handler_api_captures_clear(httpd_req_t *req) {
+    recon_lock();
+    harvest_reset();
+    recon_unlock();
+    send_ok(req);
     return ESP_OK;
 }
 
@@ -601,6 +701,11 @@ esp_err_t web_start(velo_settings_t *s) {
     register_handler(g_server, "/api/settings", HTTP_GET, handler_api_settings_get);
     register_handler(g_server, "/api/settings", HTTP_POST, handler_api_settings_post);
     register_handler(g_server, "/api/scan", HTTP_GET, handler_api_scan);
+    register_handler(g_server, "/api/captures", HTTP_GET, handler_api_captures);
+    register_handler(g_server, "/api/captures/download", HTTP_GET,
+                     handler_api_captures_download);
+    register_handler(g_server, "/api/captures/clear", HTTP_POST,
+                     handler_api_captures_clear);
     /* wildcard LAST: esp_http_server matches in registration order, so
        the wildcard must come after every exact route or it swallows them */
     register_handler(g_server, "/*", HTTP_GET, handler_static);

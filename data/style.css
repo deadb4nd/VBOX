@@ -228,6 +228,7 @@ input[type="checkbox"] {
 .btn-grid.func .btn { padding: 12px; font-size: .85rem; }
 .btn.fn { color: var(--dim); border-style: dashed; }
 .btn.fn:not(:disabled):hover { color: var(--txt); border-color: var(--acc); }
+a.btn { display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }
 
 /* recon */
 .scan-head .row { padding: 6px 0; }
@@ -272,6 +273,7 @@ td {
 td.nm { max-width: 190px; overflow: hidden; text-overflow: ellipsis; }
 td.rssi { text-align: right; color: var(--dim); }
 td.mono { font-family: ui-monospace, "Cascadia Mono", monospace; font-size: .74rem; color: var(--dim); }
+td.ok { color: var(--ok); font-weight: 700; font-size: .7rem; }
 
 button.mini {
   padding: 5px 10px;
