@@ -1,0 +1,178 @@
+:root {
+  --bg: #0d0f14;
+  --card: #161a22;
+  --line: #232a36;
+  --txt: #e6e9ef;
+  --dim: #8b93a5;
+  --acc: #4f8cff;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+  --danger-dark: #7f1d1d;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--txt);
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+body { max-width: 640px; margin: 0 auto; padding: 16px 16px 40px; }
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 2px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 1.4rem;
+  letter-spacing: 2px;
+}
+
+header h1 span { color: var(--acc); }
+
+.conn { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: .8rem; }
+.conn .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); }
+.conn.online .dot { background: var(--ok); }
+.conn.offline .dot { background: var(--danger); }
+
+.tabs { display: flex; gap: 8px; margin: 12px 0 16px; }
+.tabs .tab {
+  flex: 1;
+  padding: 10px;
+  background: var(--card);
+  color: var(--dim);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: .95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.tabs .tab.active {
+  color: var(--txt);
+  border-color: var(--acc);
+  background: #1a2230;
+}
+
+.view { display: none; }
+.view.active { display: block; }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.card h2 {
+  margin: 8px 0 12px;
+  font-size: 1rem;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* status */
+.status-card .row {
+  display: flex;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.status-card .row:last-child { border-bottom: 0; }
+.status-card .lbl { color: var(--dim); }
+
+.state {
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+.state.running { color: var(--ok); border-color: var(--ok); }
+.state.warning { color: var(--warn); border-color: var(--warn); }
+.state.idle { color: var(--dim); }
+
+/* buttons */
+.btn-grid { display: grid; grid-template-columns: 1fr; gap: 10px; margin-bottom: 10px; }
+
+.btn {
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--txt);
+  border-radius: 12px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform .05s ease, filter .1s ease;
+}
+.btn:active { transform: scale(.97); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.btn.act { background: #18213a; border-color: #27406b; }
+.btn.act:hover:not(:disabled) { filter: brightness(1.2); }
+
+.btn.stop {
+  width: 100%;
+  background: var(--danger-dark);
+  border-color: var(--danger);
+  color: #fff;
+}
+.btn.stop:hover:not(:disabled) { filter: brightness(1.25); }
+
+.btn.save {
+  width: 100%;
+  background: #12352a;
+  border-color: var(--ok);
+  color: #fff;
+}
+.btn.save:hover:not(:disabled) { filter: brightness(1.25); }
+
+/* settings form */
+form label {
+  display: block;
+  color: var(--dim);
+  font-size: .85rem;
+  margin: 10px 0;
+}
+form label.inline { color: var(--txt); font-size: 1rem; }
+
+input[type="number"], select, textarea {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 12px;
+  background: var(--bg);
+  color: var(--txt);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 1rem;
+  font-family: inherit;
+}
+input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.flash {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: .9rem;
+  display: none;
+}
+.flash.show { display: block; }
+.flash.ok { background: #0f2b1e; color: var(--ok); border: 1px solid var(--ok); }
+.flash.err { background: #3a1616; color: var(--danger); border: 1px solid var(--danger); }

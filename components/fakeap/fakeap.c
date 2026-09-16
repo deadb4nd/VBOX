@@ -14,6 +14,7 @@ static const char *TAG = "AP_SPAM";
 #define MAX_FRAME_LEN 256
 
 static bool s_ap_initialized = false;
+static bool s_ap_running = false;
 static uint16_t s_seq_num = 0;
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
@@ -29,8 +30,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
-void init_ap(void) {
+void ap_init(void) {
     if (s_ap_initialized) {
+        ap_ensure_start();
         return;
     }
 
@@ -42,26 +44,45 @@ void init_ap(void) {
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
 
-    wifi_config_t ap_cfg = {
-        .ap =
-            {
-                .ssid = "",
-                .ssid_len = 0,
-                .channel = 1,
-                .ssid_hidden = 1,    /* KEY: hidden */
-                .max_connection = 0, /* KEY: no clients */
-                .beacon_interval = 10000,
-                .authmode = WIFI_AUTH_OPEN,
-            },
-    };
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_cfg));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    ap_ensure_start();
 
     ESP_ERROR_CHECK(esp_event_handler_instance_register(
         WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
 
     s_ap_initialized = true;
-    ESP_LOGI(TAG, "Raw injector ready");
+    ESP_LOGI(TAG, "web AP '%s' ready on %s", AP_DEFAULT_SSID, "192.168.4.1");
+}
+
+void ap_ensure_start(void) {
+    wifi_config_t ap_cfg = {
+        .ap =
+            {
+                .ssid = AP_DEFAULT_SSID,
+                .ssid_len = 0,
+                .channel = AP_DEFAULT_CHANNEL,
+                .ssid_hidden = 0,
+                .max_connection = AP_DEFAULT_MAX_CONNECTIONS,
+                .beacon_interval = 100,
+                .authmode = WIFI_AUTH_OPEN,
+            },
+    };
+
+    esp_err_t err = esp_wifi_set_config(WIFI_IF_AP, &ap_cfg);
+    if (err == ESP_OK) {
+        err = esp_wifi_start();
+    }
+    if (err == ESP_OK) {
+        s_ap_running = true;
+        ESP_LOGI(TAG, "softAP started (ssid=%s)", AP_DEFAULT_SSID);
+    } else {
+        ESP_LOGE(TAG, "softAP start failed: %s", esp_err_to_name(err));
+    }
+}
+
+void ap_set_channel(uint8_t channel) {
+    esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+    /* cheap debounce so the MAC switches before raw tx */
+    vTaskDelay(pdMS_TO_TICKS(5));
 }
 
 static void build_beacon(const char *ssid, uint8_t channel, uint8_t *frame,
@@ -102,7 +123,7 @@ static void build_beacon(const char *ssid, uint8_t channel, uint8_t *frame,
 
     /* Tag 0: SSID */
     frame[pos++] = 0x00;
-    frame[pos++] = ssid_len;
+    frame[pos++] = (uint8_t)ssid_len;
     memcpy(&frame[pos], ssid, ssid_len);
     pos += ssid_len;
 

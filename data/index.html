@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VeloBox</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>VELO<span>BOX</span></h1>
+    <div class="conn" id="conn">
+      <span class="dot"></span>
+      <span id="conn-txt">offline</span>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="control">Control</button>
+    <button class="tab" data-tab="settings">Settings</button>
+  </nav>
+
+  <main>
+    <!-- ================= CONTROL ================= -->
+    <section id="tab-control" class="view active">
+      <div class="card status-card">
+        <div class="row">
+          <span class="lbl">State</span>
+          <span id="state" class="state idle">IDLE</span>
+        </div>
+        <div class="row">
+          <span class="lbl">Action</span>
+          <span id="action">None</span>
+        </div>
+        <div class="row">
+          <span class="lbl">Free heap</span>
+          <span id="heap">--</span>
+        </div>
+      </div>
+
+      <div class="btn-grid">
+        <button class="btn act" data-action="deauth">WiFi Deauth</button>
+        <button class="btn act" data-action="ble">BLE Spam</button>
+        <button class="btn act" data-action="fakeap">Fake AP</button>
+      </div>
+      <button class="btn stop" id="stop">Stop</button>
+      <div id="flash" class="flash"></div>
+    </section>
+
+    <!-- ================= SETTINGS ================= -->
+    <section id="tab-settings" class="view">
+      <form id="settings-form" class="card">
+        <h2>Fake AP</h2>
+        <label>Channel
+          <input type="number" id="fakeap_channel" min="1" max="14" step="1">
+        </label>
+        <label>Max connections
+          <input type="number" id="fakeap_max_connections" min="1" max="8" step="1">
+        </label>
+        <label>Beacon interval (TU)
+          <input type="number" id="fakeap_beacon_interval" min="20" max="10000" step="1">
+        </label>
+
+        <h2>Ball UI</h2>
+        <label>Default action
+          <select id="default_action">
+            <option value="0">WiFi Deauth</option>
+            <option value="1">BLE Spam</option>
+            <option value="2">Fake AP</option>
+          </select>
+        </label>
+
+        <label class="inline">
+          <input type="checkbox" id="ble_spam_enabled"> Enable BLE spam
+        </label>
+
+        <h2>Fake AP SSIDs</h2>
+        <label>One per line (max 32)
+          <textarea id="ssids" rows="8" spellcheck="false"></textarea>
+        </label>
+
+        <button class="btn save" type="submit">Save</button>
+        <div id="save-msg" class="flash"></div>
+      </form>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

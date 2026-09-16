@@ -27,9 +27,7 @@ void test_update_selection(void) {
     update(&curr_selection);
     TEST_ASSERT_EQUAL_INT(2, curr_selection);
 
-    update(&curr_selection);
-    TEST_ASSERT_EQUAL_INT(3, curr_selection);
-
+    /* exactly 3 actions -> wraps back to 0 */
     update(&curr_selection);
     TEST_ASSERT_EQUAL_INT(0, curr_selection);
 }

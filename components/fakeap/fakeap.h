@@ -1,28 +1,29 @@
 #ifndef FAKEAP_H
 #define FAKEAP_H
 
+#include "ap_config.h"
 #include <stdbool.h>
 #include <stdint.h>
+
+#define AP_DEFAULT_SSID "VeloBox"
+#define AP_DEFAULT_CHANNEL 1
+#define AP_DEFAULT_MAX_CONNECTIONS 4
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef struct {
-    uint8_t SSID[32];
-    uint8_t PASSWORD[64];
-    uint8_t WIFI_CHANNEL;
-    uint8_t MAX_CONNECTIONS;
-} ap_config_t;
+/* Brings up softAP + WiFi in AP mode. Safe to call after esp_wifi_stop(). */
+void ap_init(void);
 
-/* your existing globals */
-extern volatile bool g_kill_action;
-extern char *CUSTOM_SSIDS[];
+/* Re-init AP if it was stopped (e.g. after fake-AP spam). */
+void ap_ensure_start(void);
 
-void init_ap(void);
+/* Switch the AP radio to a different channel (for raw injection). */
+void ap_set_channel(uint8_t channel);
+
+/* Inject a single fake beacon for `ssid` on the current AP channel. */
 void ap_run(ap_config_t config, const char *ssid);
-void create_config(ap_config_t *config);
-int count_ssids(char **ssids);
 
 #ifdef __cplusplus
 }
