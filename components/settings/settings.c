@@ -25,6 +25,8 @@ static const char *const DEFAULT_SSIDS[] = {
 static bool valid_channel(uint8_t ch) { return ch >= 1 && ch <= 14; }
 static bool valid_max_conn(uint8_t n) { return n >= 1 && n <= 8; }
 static bool valid_interval(uint16_t tu) { return tu >= 20 && tu <= 10000; }
+static bool valid_duration(uint16_t ms) { return ms >= 500 && ms <= 10000; }
+static bool ssid_ok(const char *ssid);
 
 void settings_init_default(velo_settings_t *s) {
     if (!s) {
@@ -32,6 +34,9 @@ void settings_init_default(velo_settings_t *s) {
     }
     memset(s, 0, sizeof(*s));
     s->default_action = SETTING_ACTION_DEAUTH;
+    s->idle_timeout_ms = 1500;
+    s->warning_duration_ms = 2000;
+    snprintf(s->ap_ssid, SETTINGS_SSID_MAX_LEN, "%s", "VeloBox");
     s->fakeap_channel = 1;
     s->fakeap_max_connections = 4;
     s->fakeap_beacon_interval = 100;
@@ -51,6 +56,30 @@ bool settings_set_default_action(velo_settings_t *s, settings_action_t a) {
         return false;
     }
     s->default_action = a;
+    return true;
+}
+
+bool settings_set_idle_timeout_ms(velo_settings_t *s, uint16_t ms) {
+    if (!s || !valid_duration(ms)) {
+        return false;
+    }
+    s->idle_timeout_ms = ms;
+    return true;
+}
+
+bool settings_set_warning_duration_ms(velo_settings_t *s, uint16_t ms) {
+    if (!s || !valid_duration(ms)) {
+        return false;
+    }
+    s->warning_duration_ms = ms;
+    return true;
+}
+
+bool settings_set_ap_ssid(velo_settings_t *s, const char *ssid) {
+    if (!s || !ssid_ok(ssid)) {
+        return false;
+    }
+    snprintf(s->ap_ssid, SETTINGS_SSID_MAX_LEN, "%s", ssid);
     return true;
 }
 
@@ -143,6 +172,30 @@ bool settings_set_ssids_text(velo_settings_t *s, const char *text) {
     }
     s->ssid_count = count;
     return true;
+}
+
+size_t settings_action_summary(const velo_settings_t *s, settings_action_t a,
+                               char *buf, size_t len) {
+    if (!s || !buf || len == 0 || a >= SETTING_ACTION_COUNT) {
+        return 0;
+    }
+    buf[0] = '\0';
+    switch (a) {
+    case SETTING_ACTION_DEAUTH:
+        return (size_t)snprintf(buf, len, "no params");
+    case SETTING_ACTION_BLE_SPAM:
+        return (size_t)snprintf(buf, len, "spam=%s",
+                                s->ble_spam_enabled ? "enabled" : "DISABLED");
+    case SETTING_ACTION_FAKE_AP:
+        return (size_t)snprintf(buf, len, "ch=%u conn=%u tu=%u ssids=%lu",
+                                s->fakeap_channel, s->fakeap_max_connections,
+                                s->fakeap_beacon_interval,
+                                (unsigned long)s->ssid_count);
+    case SETTING_ACTION_OFF:
+        return (size_t)snprintf(buf, len, "safe mode - will NOT fire");
+    default:
+        return 0;
+    }
 }
 
 size_t settings_ssids_to_text(const velo_settings_t *s, char *buf, size_t len) {

@@ -13,7 +13,7 @@ document.querySelectorAll(".tab").forEach((tab) => {
   });
 });
 
-/* ---------------- status polling ---------------- */
+/* ---------------- helpers ---------------- */
 
 function flash(msg, ok) {
   const el = $("flash");
@@ -36,6 +36,23 @@ async function api(path, opts) {
   return res.json();
 }
 
+const AUTH = ["OPEN", "WEP", "WPA", "WPA2", "WPA3", "?"];
+
+/* ---------------- status polling ---------------- */
+
+function setStatePill(el, text, cls) {
+  el.textContent = text;
+  el.className = "state " + cls;
+}
+
+function setAllDisabled(disabled) {
+  document
+    .querySelectorAll(".btn[data-action]")
+    .forEach((b) => (b.disabled = disabled));
+  $("#stop").disabled = !disabled;
+  $("#stop2").disabled = !disabled;
+}
+
 async function pollStatus() {
   try {
     const st = await api("/api/status");
@@ -45,18 +62,22 @@ async function pollStatus() {
 
     const stateEl = $("state");
     if (st.running) {
-      stateEl.textContent = "RUNNING";
-      stateEl.className = "state running";
+      setStatePill(stateEl, "RUNNING", "running");
+    } else if (st.idle) {
+      setStatePill(stateEl, "SAFE", "safe");
     } else if (st.action !== "none") {
-      stateEl.textContent = "ARMED";
-      stateEl.className = "state warning";
+      setStatePill(stateEl, "ARMED", "warning");
     } else {
-      stateEl.textContent = "IDLE";
-      stateEl.className = "state idle";
+      setStatePill(stateEl, "IDLE", "idle");
     }
 
-    $("stop").disabled = !st.running;
-    document.querySelectorAll(".btn.act").forEach((b) => (b.disabled = st.running));
+    setAllDisabled(st.running);
+    const safe = !st.running && !!st.idle;
+    $("safe-hint").classList.toggle("show", safe);
+
+    $("c-deauth").textContent = st.deauth || 0;
+    $("c-probe").textContent = st.probes || 0;
+    $("c-beacons").textContent = st.beacons || 0;
   } catch (e) {
     setConn(false);
   }
@@ -64,15 +85,20 @@ async function pollStatus() {
 setInterval(pollStatus, 1000);
 pollStatus();
 
-/* ---------------- control ---------------- */
+/* ---------------- control + recon actions ---------------- */
 
-document.querySelectorAll(".btn.act").forEach((btn) => {
+document.querySelectorAll(".btn[data-action]").forEach((btn) => {
   btn.addEventListener("click", async () => {
+    const extra = btn.dataset.extra;
+    const body = new URLSearchParams({
+      name: btn.dataset.action,
+    });
+    if (extra) body.append("extra", extra);
     try {
       await api("/api/action", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: "name=" + encodeURIComponent(btn.dataset.action),
+        body,
       });
       flash(`Started: ${btn.textContent}`, true);
     } catch (e) {
@@ -82,7 +108,7 @@ document.querySelectorAll(".btn.act").forEach((btn) => {
   });
 });
 
-$("stop").addEventListener("click", async () => {
+async function stopAll() {
   try {
     await api("/api/stop", { method: "POST" });
     flash("Stopped", true);
@@ -90,7 +116,119 @@ $("stop").addEventListener("click", async () => {
     flash(e.message || "Failed to stop", false);
   }
   pollStatus();
+}
+$("stop").addEventListener("click", stopAll);
+$("stop2").addEventListener("click", stopAll);
+
+/* targeted deauth: fires immediately with bssid (and optional client) */
+async function fireTargeted(apHex, clientHex) {
+  $("target-name").textContent =
+    apHex + (clientHex ? " -> " + clientHex : "");
+  $("target-chip").classList.remove("hidden");
+  const body = new URLSearchParams({ name: "deauth" });
+  body.set("bssid", apHex);
+  if (clientHex) body.set("client", clientHex);
+  try {
+    await api("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    flash("Targeted deauth started", true);
+  } catch (e) {
+    flash(e.message || "Deauth failed", false);
+  }
+  pollStatus();
+}
+
+$("clear-target").addEventListener("click", () =>
+  $("target-chip").classList.add("hidden"));
+
+/* ---------------- recon rendering ---------------- */
+
+function esc(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function authLabel(auth) {
+  return AUTH[auth] || "?";
+}
+
+async function renderRecon() {
+  let sc;
+  try {
+    sc = await api("/api/scan");
+  } catch (e) {
+    return;
+  }
+
+  setStatePill($("wifi-scan"), sc.running ? "ON" : "off", sc.running ? "running" : "idle");
+  setStatePill($("ble-scan"), sc.ble_running ? "ON" : "off", sc.ble_running ? "running" : "idle");
+
+  const ctr = sc.counters || {};
+  $("c-beacons").textContent = ctr.beacons || 0;
+  $("c-probe").textContent = ctr.probe_reqs || 0;
+  $("c-deauth").textContent = ctr.deauths || 0;
+  $("c-eapol").textContent = ctr.eapol || 0;
+  $("c-data").textContent = ctr.data || 0;
+
+  const apBody = $("ap-table").querySelector("tbody");
+  apBody.innerHTML = "";
+  (sc.aps || []).forEach((ap) => {
+    const tr = document.createElement("tr");
+    const name = ap.ssid || (ap.hidden ? "(hidden)" : "(no name)");
+    tr.innerHTML =
+      `<td class="nm">${esc(name)}</td>` +
+      `<td>${ap.ch}</td>` +
+      `<td class="rssi">${typeof ap.rssi === "number" ? ap.rssi : "-"}</td>` +
+      `<td>${authLabel(ap.auth)}</td>` +
+      `<td><button class="mini ap-deauth" data-bssid="${ap.bssid}">Deauth</button></td>`;
+    apBody.appendChild(tr);
+  });
+
+  const staBody = $("sta-table").querySelector("tbody");
+  staBody.innerHTML = "";
+  (sc.stations || []).forEach((st) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td class="mono">${esc(st.mac)}</td>` +
+      `<td class="mono">${esc(st.ap)}</td>` +
+      `<td class="rssi">${typeof st.rssi === "number" ? st.rssi : "-"}</td>` +
+      `<td><button class="mini sta-deauth" data-bssid="${st.ap}" data-client="${st.mac}">Deauth</button></td>`;
+    staBody.appendChild(tr);
+  });
+
+  const bleBody = $("ble-table").querySelector("tbody");
+  bleBody.innerHTML = "";
+  (sc.ble || []).forEach((b) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td class="nm">${esc(b.name)}</td>` +
+      `<td class="mono">${esc(b.mac)}</td>` +
+      `<td class="rssi">${typeof b.rssi === "number" ? b.rssi : "-"}</td>`;
+    bleBody.appendChild(tr);
+  });
+}
+
+document.addEventListener("click", (e) => {
+  const apBtn = e.target.closest(".ap-deauth");
+  if (apBtn) {
+    fireTargeted(apBtn.dataset.bssid, "");
+    return;
+  }
+  const staBtn = e.target.closest(".sta-deauth");
+  if (staBtn) {
+    fireTargeted(staBtn.dataset.bssid, staBtn.dataset.client);
+    return;
+  }
 });
+
+setInterval(renderRecon, 2000);
+renderRecon();
 
 /* ---------------- settings ---------------- */
 
@@ -98,6 +236,9 @@ async function loadSettings() {
   try {
     const s = await api("/api/settings");
     $("default_action").value = s.default_action;
+    $("ap_ssid").value = s.ap_ssid;
+    $("idle_timeout_ms").value = s.idle_timeout_ms;
+    $("warning_duration_ms").value = s.warning_duration_ms;
     $("fakeap_channel").value = s.fakeap_channel;
     $("fakeap_max_connections").value = s.fakeap_max_connections;
     $("fakeap_beacon_interval").value = s.fakeap_beacon_interval;
@@ -112,6 +253,9 @@ $("settings-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const body = new URLSearchParams({
     default_action: $("default_action").value,
+    ap_ssid: $("ap_ssid").value,
+    idle_timeout_ms: $("idle_timeout_ms").value,
+    warning_duration_ms: $("warning_duration_ms").value,
     fakeap_channel: $("fakeap_channel").value,
     fakeap_max_connections: $("fakeap_max_connections").value,
     fakeap_beacon_interval: $("fakeap_beacon_interval").value,

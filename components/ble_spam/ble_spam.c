@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "esp_random.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "host/ble_hs.h"
 #include "host/ble_hs_id.h"
@@ -324,4 +325,156 @@ void ble_spam_stop(void) {
         ble_gap_adv_stop();
         adv_active = false;
     }
+}
+
+/* ------------------------------------------------------------------ */
+/*  BLE scanner                                                       */
+/* ------------------------------------------------------------------ */
+
+static SemaphoreHandle_t s_scan_mux = NULL;
+static volatile bool s_scan_loop = false;
+
+typedef struct {
+    uint8_t mac[6];
+    char name[BLE_SCAN_NAME_LEN];
+    int8_t rssi;
+    bool seen;
+} ble_dev_t;
+
+static ble_dev_t s_devs[BLE_SCAN_MAX_DEVICES];
+static uint32_t s_dev_count = 0;
+
+static void parse_adv_name(const uint8_t *data, uint8_t len, char *out,
+                           uint8_t cap) {
+    uint8_t pos = 0;
+    out[0] = '\0';
+    while (pos + 2 <= len) {
+        uint8_t alen = data[pos];
+        if (alen == 0) {
+            break;
+        }
+        uint8_t atype = data[pos + 1];
+        uint8_t dlen = alen - 1;
+        uint8_t start = pos + 2;
+        if (start + dlen > len) {
+            break;
+        }
+        if ((atype == 0x08 || atype == 0x09) && dlen > 0) {
+            uint8_t n = dlen < cap - 1 ? dlen : cap - 1;
+            memcpy(out, &data[start], n);
+            out[n] = '\0';
+            return;
+        }
+        pos = start + dlen;
+    }
+}
+
+static struct ble_gap_disc_params scan_params(void) {
+    struct ble_gap_disc_params p = {0};
+    p.itvl = 0x0050;
+    p.window = 0x0050;
+    p.filter_duplicates = 1;
+    return p;
+}
+
+static int scan_gap_event(struct ble_gap_event *event, void *arg) {
+    (void)arg;
+    switch (event->type) {
+    case BLE_GAP_EVENT_DISC: {
+        const ble_addr_t *addr = &event->disc.addr;
+        if (xSemaphoreTake(s_scan_mux, 0) != pdTRUE) {
+            return 0;
+        }
+        uint32_t i;
+        for (i = 0; i < s_dev_count; i++) {
+            if (memcmp(s_devs[i].mac, addr->val, 6) == 0) {
+                break;
+            }
+        }
+        if (i >= s_dev_count && i < BLE_SCAN_MAX_DEVICES) {
+            s_dev_count++;
+            memcpy(s_devs[i].mac, addr->val, 6);
+            s_devs[i].seen = 1;
+            s_devs[i].rssi = -128;
+            s_devs[i].name[0] = '\0';
+        }
+        s_devs[i].rssi = event->disc.rssi;
+        if (event->disc.length_data > 0) {
+            parse_adv_name(event->disc.data, event->disc.length_data,
+                           s_devs[i].name, BLE_SCAN_NAME_LEN);
+        }
+        xSemaphoreGive(s_scan_mux);
+        return 0;
+    }
+    case BLE_GAP_EVENT_DISC_COMPLETE:
+        if (s_scan_loop) {
+            /* keep scanning until told to stop */
+            struct ble_gap_disc_params p = scan_params();
+            ble_gap_disc(BLE_OWN_ADDR_PUBLIC, 5000, &p, scan_gap_event, NULL);
+        }
+        return 0;
+    default:
+        return 0;
+    }
+}
+
+void ble_scan_start(void) {
+    if (s_scan_mux == NULL) {
+        s_scan_mux = xSemaphoreCreateMutex();
+    }
+    ble_spam_stop(); /* advertising and discovery can't run together */
+    s_scan_loop = true;
+    s_dev_count = 0;
+    memset(s_devs, 0, sizeof(s_devs));
+    ESP_LOGI(TAG, "BLE scan starting");
+    struct ble_gap_disc_params p = scan_params();
+    int rc = ble_gap_disc(BLE_OWN_ADDR_PUBLIC, 5000, &p, scan_gap_event, NULL);
+    if (rc != 0) {
+        ESP_LOGE(TAG, "ble_gap_disc failed: %d", rc);
+        s_scan_loop = false;
+    }
+}
+
+void ble_scan_stop(void) {
+    s_scan_loop = false;
+    ble_gap_disc_cancel();
+}
+
+bool ble_scan_running(void) { return s_scan_loop; }
+
+void ble_scan_reset(void) {
+    if (!s_scan_mux) {
+        return;
+    }
+    xSemaphoreTake(s_scan_mux, portMAX_DELAY);
+    s_dev_count = 0;
+    memset(s_devs, 0, sizeof(s_devs));
+    xSemaphoreGive(s_scan_mux);
+}
+
+uint32_t ble_scan_count(void) {
+    uint32_t c = 0;
+    if (s_scan_mux) {
+        xSemaphoreTake(s_scan_mux, portMAX_DELAY);
+        c = s_dev_count;
+        xSemaphoreGive(s_scan_mux);
+    }
+    return c;
+}
+
+void ble_scan_get(uint32_t i, uint8_t mac[6], char name[BLE_SCAN_NAME_LEN],
+                  int8_t *rssi) {
+    if (!s_scan_mux) {
+        return;
+    }
+    xSemaphoreTake(s_scan_mux, portMAX_DELAY);
+    if (i < s_dev_count) {
+        memcpy(mac, s_devs[i].mac, 6);
+        snprintf(name, BLE_SCAN_NAME_LEN, "%s",
+                 s_devs[i].name[0] ? s_devs[i].name : "(no name)");
+        if (rssi) {
+            *rssi = s_devs[i].rssi;
+        }
+    }
+    xSemaphoreGive(s_scan_mux);
 }

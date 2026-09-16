@@ -2,6 +2,7 @@
 #include "ble_spam.h"
 #include "fakeap.h"
 #include "logic.h"
+#include "recon.h"
 #include "settings.h"
 #include "settings_nvs.h"
 #include "web.h"
@@ -21,8 +22,7 @@
 #define MOTOR_GPIO GPIO_NUM_2
 #define BALL_BTN GPIO_NUM_21
 
-#define IDLE_TIMEOUT_US (1500 * 1000)     // 1.5 s
-#define WARNING_DURATION_US (2000 * 1000) // 2.0 s
+#define LOOP_DELAY_MS 50
 
 static const char *TAG = "VELO_BOX";
 
@@ -64,48 +64,103 @@ static void buzzer_off(void) { gpio_set_level(BUZZER_GPIO, 0); }
 static void motor_on(void) { gpio_set_level(MOTOR_GPIO, 1); }
 static void motor_off(void) { gpio_set_level(MOTOR_GPIO, 0); }
 
-static void haptic_tick(void) {
+/*
+ * Non-blocking haptic scheduler. Patterns are queued as (on, off) pulse
+ * trains and advanced from the main loop via haptic_update(), so the loop
+ * never stalls and rolls are never missed while the motor is running.
+ */
+typedef enum { HPHASE_STOPPED, HPHASE_ON, HPHASE_GAP } haptic_phase_t;
+
+static struct {
+  bool active;
+  bool repeat; /* heartbeat mode until next trigger/haptic_stop_all() */
+  haptic_phase_t phase;
+  int32_t phase_ms;
+  uint8_t pulses_left;
+  uint16_t on_ms;
+  uint16_t off_ms;
+} g_haptic = {.phase = HPHASE_STOPPED};
+
+static void haptic_trigger(uint8_t pulses, uint16_t on_ms, uint16_t off_ms) {
+  g_haptic.active = true;
+  g_haptic.repeat = false;
+  g_haptic.pulses_left = pulses;
+  g_haptic.on_ms = on_ms;
+  g_haptic.off_ms = off_ms;
+  g_haptic.phase = HPHASE_ON;
+  g_haptic.phase_ms = (int32_t)on_ms;
   motor_on();
-  vTaskDelay(pdMS_TO_TICKS(220));
-  motor_off();
-  vTaskDelay(pdMS_TO_TICKS(100));
 }
 
-static void haptic_warning(void) {
+static void haptic_repeat(uint16_t on_ms, uint16_t off_ms) {
+  g_haptic.active = true;
+  g_haptic.repeat = true;
+  g_haptic.pulses_left = 0;
+  g_haptic.on_ms = on_ms;
+  g_haptic.off_ms = off_ms;
+  g_haptic.phase = HPHASE_ON;
+  g_haptic.phase_ms = (int32_t)on_ms;
   motor_on();
-  vTaskDelay(pdMS_TO_TICKS(350));
-  motor_off();
-  vTaskDelay(pdMS_TO_TICKS(250));
-  motor_on();
-  vTaskDelay(pdMS_TO_TICKS(350));
+}
+
+static void haptic_stop_all(void) {
+  g_haptic.active = false;
+  g_haptic.repeat = false;
+  g_haptic.phase = HPHASE_STOPPED;
   motor_off();
 }
 
-static void haptic_confirm(void) {
-  motor_on();
-  vTaskDelay(pdMS_TO_TICKS(250));
-  motor_off();
+static void haptic_update(int32_t dt_ms) {
+  if (!g_haptic.active || dt_ms <= 0) {
+    return;
+  }
+  g_haptic.phase_ms -= dt_ms;
+  if (g_haptic.phase_ms > 0) {
+    return;
+  }
+
+  if (g_haptic.phase == HPHASE_ON) {
+    motor_off();
+    if (g_haptic.repeat) {
+      g_haptic.phase = HPHASE_GAP;
+      g_haptic.phase_ms = (int32_t)g_haptic.off_ms;
+    } else if (g_haptic.pulses_left > 1) {
+      g_haptic.pulses_left--;
+      g_haptic.phase = HPHASE_GAP;
+      g_haptic.phase_ms = (int32_t)g_haptic.off_ms;
+    } else {
+      g_haptic.active = false;
+      g_haptic.phase = HPHASE_STOPPED;
+    }
+  } else { /* HPHASE_GAP */
+    g_haptic.phase = HPHASE_ON;
+    g_haptic.phase_ms = (int32_t)g_haptic.on_ms;
+    motor_on();
+  }
 }
 
-static void haptic_cancel(void) {
-  motor_on();
-  vTaskDelay(pdMS_TO_TICKS(220));
-  motor_off();
-  vTaskDelay(pdMS_TO_TICKS(120));
-  motor_on();
-  vTaskDelay(pdMS_TO_TICKS(220));
-  motor_off();
+/* Pocket-feel patterns: n pulses = n = (selection + 1), so 1 = Deauth,
+   2 = BLE, 3 = FakeAP. The LED mirrors it with n blinks. */
+static int g_sel_flash = 0;      // LED blinks still to display
+static int g_sel_flash_ticks = 0; // within-blink tick counter
+static settings_action_t g_selection = SETTING_ACTION_DEAUTH;
+
+static void selection_feedback(settings_action_t sel) {
+  if (sel == SETTING_ACTION_OFF) {
+    haptic_trigger(1, 320, 0); /* one long pulse = safe mode */
+    g_sel_flash = 2;
+    g_sel_flash_ticks = 0;
+    return;
+  }
+  int n = (int)sel + 1;
+  haptic_trigger((uint8_t)n, 90, 110);
+  g_sel_flash = n;
+  g_sel_flash_ticks = 0;
 }
 
-static void haptic_startup(void) {
-  motor_on();
-  vTaskDelay(pdMS_TO_TICKS(400));
-  motor_off();
-  vTaskDelay(pdMS_TO_TICKS(250));
-  motor_on();
-  vTaskDelay(pdMS_TO_TICKS(400));
-  motor_off();
-}
+static void haptic_startup(void) { haptic_trigger(2, 250, 240); }
+static void haptic_confirm(void) { haptic_trigger(1, 180, 0); }
+static void haptic_cancel(void) { haptic_trigger(2, 120, 110); }
 
 /* ---------------- state machine ---------------- */
 
@@ -116,8 +171,21 @@ typedef enum {
 } sys_state_t;
 
 static action_t selection_to_action(settings_action_t sel) {
+  if (sel == SETTING_ACTION_OFF) {
+    return ACTION_NONE;
+  }
   return (action_t)((int)sel + 1);
 }
+
+static void enter_safe_mode(void) {
+  g_selection = SETTING_ACTION_OFF;
+  settings_set_default_action(&g_settings, SETTING_ACTION_OFF);
+  g_sel_flash = 0;
+  ESP_LOGI(TAG, ">> SAFE MODE - will not fire (roll to arm)");
+}
+
+/* track the active label so "done" logging survives action reset */
+static const char *g_run_label = "None";
 
 void app_main(void) {
   log_memory_usage();
@@ -139,8 +207,10 @@ void app_main(void) {
   settings_nvs_load(&g_settings);
   actions_set_settings(&g_settings);
 
-  ap_init(); // visible softAP "VeloBox" -> 192.168.4.1
+  ap_set_name(g_settings.ap_ssid); // before the AP comes up
+  ap_init(); // visible softAP (name from settings) -> 192.168.4.1
   ble_spam_init();
+  recon_init();
   web_start(&g_settings);
 
   gpio_config_t ball_conf = {
@@ -153,41 +223,69 @@ void app_main(void) {
   gpio_config(&ball_conf);
 
   haptic_startup();
-  ESP_LOGI(TAG, "Ready. Roll ball to browse.");
+
+  ESP_LOGI(TAG, "----- boot -----");
+  ESP_LOGI(TAG, "default action : %s", actions_name(selection_to_action(g_settings.default_action)));
+  ESP_LOGI(TAG, "idle timeout   : %u ms", g_settings.idle_timeout_ms);
+  ESP_LOGI(TAG, "warning window : %u ms", g_settings.warning_duration_ms);
+  ESP_LOGI(TAG, "fakeap         : ch %u, %u conn, %u TU", g_settings.fakeap_channel,
+           g_settings.fakeap_max_connections, g_settings.fakeap_beacon_interval);
+  ESP_LOGI(TAG, "ble spam       : %s", g_settings.ble_spam_enabled ? "enabled" : "disabled");
+  ESP_LOGI(TAG, "ssids          : %u loaded", g_settings.ssid_count);
+  ESP_LOGI(TAG, "web            : http://192.168.4.1/");
+  ESP_LOGI(TAG, "ready - roll the ball to arm (1 buzz = deauth, 2 = BLE, 3 = fakeap)");
+  ESP_LOGI(TAG, "----- boot done -----");
 
   sys_state_t g_state = STATE_BROWSING;
-  settings_action_t g_selection = g_settings.default_action;
+  g_selection = g_settings.default_action;
   int g_last_ball = gpio_get_level(BALL_BTN);
 
   int64_t last_move_time = esp_timer_get_time();
+  int64_t last_tick_us = esp_timer_get_time();
   int64_t warning_start_us = 0;
   sys_state_t g_last_led_state = 0xFF;
   int g_led_tick = 0;
+  bool g_prev_running = false;
 
   while (true) {
     int ball_value = gpio_get_level(BALL_BTN);
     int64_t now = esp_timer_get_time();
+    int32_t dt_ms = (int32_t)((now - last_tick_us) / 1000);
+    last_tick_us = now;
     bool rolled = has_ball_moved(ball_value, g_last_ball);
 
     if (rolled) {
       if (g_state == STATE_RUNNING) {
-        printf(">>> USER CANCELLED EXECUTION <<<\n");
+        ESP_LOGI(TAG, ">> stopping: %s", g_run_label);
+        haptic_stop_all();
         actions_stop();
         g_state = STATE_BROWSING;
+        enter_safe_mode();
         haptic_cancel();
 
       } else if (g_state == STATE_WARNING) {
-        printf(">>> USER CANCELLED WARNING <<<\n");
+        ESP_LOGI(TAG, ">> warning cancelled");
         g_state = STATE_BROWSING;
+        enter_safe_mode();
+        haptic_stop_all();
         haptic_cancel();
 
       } else { // STATE_BROWSING
         g_selection = (settings_action_t)(((int)g_selection + 1) %
                                           (int)SETTING_ACTION_COUNT);
         settings_set_default_action(&g_settings, g_selection);
-        printf("Selected: %s\n",
-               actions_name(selection_to_action(g_selection)));
-        haptic_tick();
+        if (g_selection == SETTING_ACTION_OFF) {
+          ESP_LOGI(TAG, ">> SAFE MODE - will not fire (roll to arm)");
+        } else {
+          char summary[96];
+          settings_action_summary(&g_settings, g_selection, summary,
+                                  sizeof(summary));
+          ESP_LOGI(TAG, ">> armed: %s (%d buzz%s) [%s]",
+                   actions_name(selection_to_action(g_selection)),
+                   (int)g_selection + 1,
+                   (int)g_selection == 0 ? "" : "es", summary);
+        }
+        selection_feedback(g_selection);
       }
       last_move_time = now;
     }
@@ -195,40 +293,72 @@ void app_main(void) {
     /* the web settings page can change the default action while idle */
     if (g_state == STATE_BROWSING && g_selection != g_settings.default_action) {
       g_selection = g_settings.default_action;
+      if (g_selection == SETTING_ACTION_OFF) {
+        ESP_LOGI(TAG, ">> SAFE MODE via web - will not fire");
+        haptic_trigger(1, 320, 0);
+        g_sel_flash = 2;
+        g_sel_flash_ticks = 0;
+      } else {
+        ESP_LOGI(TAG, ">> default action updated via web: %s",
+                 actions_name(selection_to_action(g_selection)));
+      }
     }
 
     if (g_state == STATE_BROWSING) {
-      if ((now - last_move_time) >= IDLE_TIMEOUT_US) {
+      if (g_selection == SETTING_ACTION_OFF) {
+        /* safe mode: never auto-arm, pocket rolls do nothing */
+      } else if ((now - last_move_time) >=
+                 (int64_t)g_settings.idle_timeout_ms * 1000) {
         g_state = STATE_WARNING;
         warning_start_us = now;
-        printf("WARNING: %s will fire in %.1f s\n",
-               actions_name(selection_to_action(g_selection)),
-               WARNING_DURATION_US / 1000000.0f);
-        haptic_warning();
+        char summary[96];
+        settings_action_summary(&g_settings, g_selection, summary,
+                                sizeof(summary));
+        ESP_LOGI(TAG, ">> WARNING: %s fires in %u ms - roll to cancel [%s]",
+                 actions_name(selection_to_action(g_selection)),
+                 g_settings.warning_duration_ms, summary);
+        haptic_repeat(70, 260); // heartbeat so it is felt from a pocket
       }
 
     } else if (g_state == STATE_WARNING) {
-      if ((now - warning_start_us) >= WARNING_DURATION_US) {
+      if ((now - warning_start_us) >= (int64_t)g_settings.warning_duration_ms * 1000) {
         action_t a = selection_to_action(g_selection);
-        printf("EXECUTE: %s\n", actions_name(a));
         if (actions_start(a)) {
           g_state = STATE_RUNNING;
+          g_run_label = actions_name(a);
+          ESP_LOGI(TAG, ">> FIRING: %s", g_run_label);
           haptic_confirm();
         } else {
-          printf("EXECUTE declined, back to browsing\n");
+          ESP_LOGI(TAG, ">> %s declined - back to browsing", actions_name(a));
           last_move_time = now;
           g_state = STATE_BROWSING;
+          g_sel_flash = 0;
         }
       }
 
     } else if (g_state == STATE_RUNNING) {
-      /* action finished on its own -> back to browsing */
+      /* action finished on its own -> safe mode (never auto re-fire) */
       if (!actions_is_running()) {
+        ESP_LOGI(TAG, ">> done: %s - now safe (no loop)", g_run_label);
         g_state = STATE_BROWSING;
         last_move_time = now;
-        motor_off();
+        haptic_stop_all();
+        enter_safe_mode();
       }
     }
+
+    /* action started outside the local arm flow (web page) -> pull the
+       state machine into RUNNING so LED/buzzer/confirm feedback happens */
+    bool running_now = actions_is_running();
+    if (running_now && !g_prev_running && g_state != STATE_RUNNING) {
+      haptic_stop_all();
+      g_state = STATE_RUNNING;
+      g_run_label = actions_name(actions_current());
+      ESP_LOGI(TAG, ">> FIRING via web: %s", g_run_label);
+      haptic_confirm();
+      last_move_time = now;
+    }
+    g_prev_running = running_now;
 
     if (g_state != g_last_led_state) {
       g_last_led_state = g_state;
@@ -238,8 +368,28 @@ void app_main(void) {
 
     switch (g_state) {
     case STATE_BROWSING:
-      led_off();
       buzzer_off();
+      if (g_sel_flash > 0) {
+        g_sel_flash_ticks++;
+        if (g_sel_flash_ticks >= 10) {
+          g_sel_flash_ticks = 0;
+          g_sel_flash--;
+        }
+        if (g_sel_flash_ticks < 5) {
+          led_on();
+        } else {
+          led_off();
+        }
+      } else if (g_selection == SETTING_ACTION_OFF) {
+        /* safe mode: single blip every ~5 s so you know it is alive */
+        if ((g_led_tick % 100) < 2) {
+          led_on();
+        } else {
+          led_off();
+        }
+      } else {
+        led_off();
+      }
       break;
     case STATE_WARNING:
       if ((g_led_tick % 20) < 10) {
@@ -261,7 +411,9 @@ void app_main(void) {
       break;
     }
 
+    haptic_update(dt_ms);
+
     g_last_ball = ball_value;
-    vTaskDelay(pdMS_TO_TICKS(50));
+    vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
   }
 }

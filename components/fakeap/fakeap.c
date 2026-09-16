@@ -16,6 +16,26 @@ static const char *TAG = "AP_SPAM";
 static bool s_ap_initialized = false;
 static bool s_ap_running = false;
 static uint16_t s_seq_num = 0;
+static char s_ap_name[33] = AP_DEFAULT_SSID;
+
+static void ap_apply_config(void);
+
+void ap_set_name(const char *ssid) {
+    if (!ssid) {
+        return;
+    }
+    size_t n = strlen(ssid);
+    if (n == 0 || n >= sizeof(s_ap_name)) {
+        return;
+    }
+    snprintf(s_ap_name, sizeof(s_ap_name), "%s", ssid);
+    if (!s_ap_initialized) {
+        ESP_LOGI(TAG, "AP name set to '%s' (applied on start)", s_ap_name);
+        return;
+    }
+    ap_apply_config(); /* live re-broadcast, keeps clients connected */
+    ESP_LOGI(TAG, "AP name updated live to '%s'", s_ap_name);
+}
 
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data) {
@@ -39,10 +59,13 @@ void ap_init(void) {
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     esp_netif_create_default_wifi_ap();
+    /* STA netif so promiscuous sniffing (recon) can receive frames while
+       the softAP keeps running. The STA never associates to anything. */
+    esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
 
     ap_ensure_start();
 
@@ -50,30 +73,26 @@ void ap_init(void) {
         WIFI_EVENT, ESP_EVENT_ANY_ID, &wifi_event_handler, NULL, NULL));
 
     s_ap_initialized = true;
-    ESP_LOGI(TAG, "web AP '%s' ready on %s", AP_DEFAULT_SSID, "192.168.4.1");
+    ESP_LOGI(TAG, "web AP '%s' ready on 192.168.4.1", s_ap_name);
+}
+
+static void ap_apply_config(void) {
+    wifi_config_t ap_cfg = {0};
+    memcpy(ap_cfg.ap.ssid, s_ap_name, strlen(s_ap_name) + 1);
+    ap_cfg.ap.channel = AP_DEFAULT_CHANNEL;
+    ap_cfg.ap.max_connection = AP_DEFAULT_MAX_CONNECTIONS;
+    ap_cfg.ap.beacon_interval = 100;
+    ap_cfg.ap.authmode = WIFI_AUTH_OPEN;
+    esp_wifi_set_config(WIFI_IF_AP, &ap_cfg);
 }
 
 void ap_ensure_start(void) {
-    wifi_config_t ap_cfg = {
-        .ap =
-            {
-                .ssid = AP_DEFAULT_SSID,
-                .ssid_len = 0,
-                .channel = AP_DEFAULT_CHANNEL,
-                .ssid_hidden = 0,
-                .max_connection = AP_DEFAULT_MAX_CONNECTIONS,
-                .beacon_interval = 100,
-                .authmode = WIFI_AUTH_OPEN,
-            },
-    };
+    ap_apply_config();
 
-    esp_err_t err = esp_wifi_set_config(WIFI_IF_AP, &ap_cfg);
-    if (err == ESP_OK) {
-        err = esp_wifi_start();
-    }
+    esp_err_t err = esp_wifi_start();
     if (err == ESP_OK) {
         s_ap_running = true;
-        ESP_LOGI(TAG, "softAP started (ssid=%s)", AP_DEFAULT_SSID);
+        ESP_LOGI(TAG, "softAP started (ssid=%s)", s_ap_name);
     } else {
         ESP_LOGE(TAG, "softAP start failed: %s", esp_err_to_name(err));
     }

@@ -1,10 +1,13 @@
 #include "web.h"
 
 #include "actions.h"
+#include "ble_spam.h"
 #include "esp_heap_caps.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_spiffs.h"
+#include "fakeap.h"
+#include "recon.h"
 #include "settings.h"
 #include "settings_nvs.h"
 
@@ -101,6 +104,30 @@ static bool as_bool(const char *v) {
            strcmp(v, "on") == 0 || strcmp(v, "yes") == 0;
 }
 
+static int hex_nibble(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+/* Parse a 12-char hex string (no separators) into a 6-byte MAC.
+   Returns false on invalid input or empty string. */
+static bool parse_hex6(const char *in, uint8_t out[6]) {
+    if (!in || strlen(in) != 12) {
+        return false;
+    }
+    for (int i = 0; i < 6; i++) {
+        int hi = hex_nibble(in[i * 2]);
+        int lo = hex_nibble(in[i * 2 + 1]);
+        if (hi < 0 || lo < 0) {
+            return false;
+        }
+        out[i] = (uint8_t)((hi << 4) | lo);
+    }
+    return true;
+}
+
 /* Minimal JSON string escape; truncates at `len` incl. NUL. */
 static size_t json_escape(char *out, size_t len, const char *in) {
     size_t i = 0;
@@ -143,6 +170,12 @@ static const char *action_slug(action_t a) {
         return "ble";
     case ACTION_FAKE_AP:
         return "fakeap";
+    case ACTION_RECON:
+        return "recon";
+    case ACTION_BLE_SCAN:
+        return "blescan";
+    case ACTION_PROBE_FLOOD:
+        return "probe";
     default:
         return "none";
     }
@@ -236,13 +269,19 @@ static esp_err_t handler_static(httpd_req_t *req) {
 static esp_err_t handler_api_status(httpd_req_t *req) {
     bool running = actions_is_running();
     action_t cur = actions_current();
+    bool idle = !running && g_settings &&
+                g_settings->default_action == SETTING_ACTION_OFF;
 
     uint32_t free = heap_caps_get_free_size(MALLOC_CAP_8BIT);
-    char buf[160];
+    action_counters_t ctr = actions_counters();
+    char buf[256];
     snprintf(buf, sizeof(buf),
-             "{\"running\":%s,\"action\":\"%s\",\"label\":\"%s\","
+             "{\"running\":%s,\"idle\":%s,\"action\":\"%s\",\"label\":\"%s\","
+             "\"deauth\":%lu,\"probes\":%lu,\"beacons\":%lu,"
              "\"free_heap\":%lu}\n",
-             running ? "true" : "false", action_slug(cur), actions_name(cur),
+             running ? "true" : "false", idle ? "true" : "false",
+             action_slug(cur), actions_name(cur), (unsigned long)ctr.deauth_sent,
+             (unsigned long)ctr.probe_sent, (unsigned long)ctr.beacon_sent,
              (unsigned long)free);
     return httpd_send_json(req, 200, buf);
 }
@@ -268,9 +307,27 @@ static esp_err_t handler_api_action(httpd_req_t *req) {
         a = ACTION_BLE_SPAM;
     } else if (!strcmp(name, "fakeap")) {
         a = ACTION_FAKE_AP;
+    } else if (!strcmp(name, "recon")) {
+        a = ACTION_RECON;
+    } else if (!strcmp(name, "blescan")) {
+        a = ACTION_BLE_SCAN;
+    } else if (!strcmp(name, "probe")) {
+        a = ACTION_PROBE_FLOOD;
     } else {
         send_err(req, "unknown action");
         return ESP_OK;
+    }
+
+    /* optional targeting for deauth */
+    actions_clear_target();
+    uint8_t ap[6], client[6];
+    char v[16];
+    if (form_value(body, "bssid", v, sizeof(v)) && parse_hex6(v, ap)) {
+        if (form_value(body, "client", v, sizeof(v)) && parse_hex6(v, client)) {
+            actions_set_target(ap, client);
+        } else {
+            actions_set_target(ap, NULL);
+        }
     }
 
     if (actions_is_running()) {
@@ -301,13 +358,19 @@ static esp_err_t handler_api_settings_get(httpd_req_t *req) {
     char ssids_json[SETTINGS_MAX_SSIDS * SETTINGS_SSID_MAX_LEN * 2 + 8];
     json_escape(ssids_json, sizeof(ssids_json), ssids_buf);
 
+    char ap_json[SETTINGS_SSID_MAX_LEN * 2 + 8];
+    json_escape(ap_json, sizeof(ap_json), g_settings->ap_ssid);
+
     char buf[768 + sizeof(ssids_json)];
     int n = snprintf(
         buf, sizeof(buf),
-        "{\"default_action\":%d,\"fakeap_channel\":%u,"
+        "{\"default_action\":%d,\"idle_timeout_ms\":%u,"
+        "\"warning_duration_ms\":%u,\"ap_ssid\":\"%s\","
+        "\"fakeap_channel\":%u,"
         "\"fakeap_max_connections\":%u,\"fakeap_beacon_interval\":%u,"
         "\"ble_spam_enabled\":%s,\"ssids\":\"%s\"}\n",
-        (int)g_settings->default_action, g_settings->fakeap_channel,
+        (int)g_settings->default_action, g_settings->idle_timeout_ms,
+        g_settings->warning_duration_ms, ap_json, g_settings->fakeap_channel,
         g_settings->fakeap_max_connections, g_settings->fakeap_beacon_interval,
         g_settings->ble_spam_enabled ? "true" : "false", ssids_json);
     if (n < 0) {
@@ -331,6 +394,15 @@ static esp_err_t handler_api_settings_post(httpd_req_t *req) {
     if (form_value(body, "default_action", v, sizeof(v))) {
         settings_set_default_action(g_settings, (settings_action_t)atoi(v));
     }
+    if (form_value(body, "idle_timeout_ms", v, sizeof(v))) {
+        settings_set_idle_timeout_ms(g_settings, (uint16_t)atoi(v));
+    }
+    if (form_value(body, "warning_duration_ms", v, sizeof(v))) {
+        settings_set_warning_duration_ms(g_settings, (uint16_t)atoi(v));
+    }
+    if (form_value(body, "ap_ssid", v, sizeof(v))) {
+        settings_set_ap_ssid(g_settings, v);
+    }
     if (form_value(body, "fakeap_channel", v, sizeof(v))) {
         settings_set_fakeap_channel(g_settings, (uint8_t)atoi(v));
     }
@@ -348,7 +420,124 @@ static esp_err_t handler_api_settings_post(httpd_req_t *req) {
     }
 
     settings_nvs_save(g_settings);
+    ap_set_name(g_settings->ap_ssid); /* re-broadcast AP name live */
+    ESP_LOGI(TAG, "settings saved: action=%s idle=%ums warning=%ums "
+                  "channel=%u conn=%u tu=%u ble=%s ssids=%u ap=%s",
+             actions_name((action_t)((int)g_settings->default_action + 1)),
+             g_settings->idle_timeout_ms, g_settings->warning_duration_ms,
+             g_settings->fakeap_channel, g_settings->fakeap_max_connections,
+             g_settings->fakeap_beacon_interval,
+             g_settings->ble_spam_enabled ? "yes" : "no",
+             g_settings->ssid_count, g_settings->ap_ssid);
     send_ok(req);
+    return ESP_OK;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Recon / scan API                                                  */
+/* ------------------------------------------------------------------ */
+
+static void mac_to_hex(char *out, const uint8_t m[6]) {
+    snprintf(out, 18, "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2],
+             m[3], m[4], m[5]);
+}
+
+static esp_err_t handler_api_scan(httpd_req_t *req) {
+    /* JSON is built into a heap buffer; device RAM is fine for a page
+       of tables but the buffer is capped so a giant sky full of APs
+       degrades gracefully. */
+    size_t cap = 8192;
+    char *buf = heap_caps_malloc(cap, MALLOC_CAP_8BIT);
+    if (!buf) {
+        send_err(req, "oom");
+        return ESP_OK;
+    }
+    char *p = buf;
+    char *end = buf + cap;
+
+    bool recon_on = actions_current() == ACTION_RECON && actions_is_running();
+    bool ble_on = actions_current() == ACTION_BLE_SCAN && actions_is_running();
+
+    int n = snprintf(p, (size_t)(end - p),
+                     "{\"running\":%s,\"ble_running\":%s,"
+                     "\"aps\":[",
+                     recon_on ? "true" : "false",
+                     ble_on ? "true" : "false");
+    p += n;
+
+    uint32_t comma = 0;
+    uint32_t ap_n = 0, st_n = 0, ble_n = 0;
+
+    recon_lock();
+    ap_n = recon_core_ap_count();
+    for (uint32_t i = 0; i < ap_n; i++) {
+        if (p >= end - 220) break;
+        const recon_ap_t *ap = recon_core_ap_get(i);
+        char mac[18], ssid[RECON_SSID_LEN * 2 + 2];
+        mac_to_hex(mac, ap->bssid);
+        json_escape(ssid, sizeof(ssid), ap->ssid);
+        n = snprintf(p, (size_t)(end - p), "%s{\"bssid\":\"%s\",\"ssid\":\"%s\","
+                     "\"ch\":%u,\"rssi\":%d,\"auth\":%u,\"hidden\":%s}",
+                     comma++ ? "," : "", mac, ssid, ap->channel, ap->rssi,
+                     ap->authmode, ap->hidden ? "true" : "false");
+        if (n < 0 || p + n >= end) break;
+        p += n;
+    }
+    recon_unlock();
+
+    n = snprintf(p, (size_t)(end - p), "],\"stations\":[");
+    p += n;
+    comma = 0;
+
+    recon_lock();
+    st_n = recon_core_station_count();
+    for (uint32_t i = 0; i < st_n; i++) {
+        if (p >= end - 160) break;
+        const recon_station_t *st = recon_core_station_get(i);
+        char mac[18], ap[18];
+        mac_to_hex(mac, st->mac);
+        mac_to_hex(ap, st->ap);
+        n = snprintf(p, (size_t)(end - p), "%s{\"mac\":\"%s\",\"ap\":\"%s\","
+                     "\"rssi\":%d}", comma++ ? "," : "", mac, ap, st->rssi);
+        if (n < 0 || p + n >= end) break;
+        p += n;
+    }
+    recon_unlock();
+
+    recon_lock();
+    const recon_counters_t *ctr = recon_core_counters();
+    n = snprintf(p, (size_t)(end - p),
+                 "],\"counters\":{\"beacons\":%lu,\"probe_reqs\":%lu,"
+                 "\"probe_resps\":%lu,\"deauths\":%lu,\"eapol\":%lu,"
+                 "\"data\":%lu},\"ble\":[",
+                 (unsigned long)ctr->beacons, (unsigned long)ctr->probe_reqs,
+                 (unsigned long)ctr->probe_resps, (unsigned long)ctr->deauths,
+                 (unsigned long)ctr->eapol, (unsigned long)ctr->data);
+    recon_unlock();
+    p += n;
+    comma = 0;
+
+    ble_n = ble_scan_count();
+    for (uint32_t i = 0; i < ble_n && p < end - 140; i++) {
+        uint8_t mac[6];
+        char name[BLE_SCAN_NAME_LEN], macs[18];
+        int8_t rssi = 0;
+        ble_scan_get(i, mac, name, &rssi);
+        mac_to_hex(macs, mac);
+        char name_json[BLE_SCAN_NAME_LEN * 2 + 2];
+        json_escape(name_json, sizeof(name_json), name);
+        n = snprintf(p, (size_t)(end - p), "%s{\"mac\":\"%s\",\"name\":\"%s\","
+                     "\"rssi\":%d}", comma++ ? "," : "", macs, name_json,
+                     rssi);
+        if (n < 0 || p + n >= end) break;
+        p += n;
+    }
+
+    n = snprintf(p, (size_t)(end - p), "]}\n");
+    p += n;
+
+    httpd_send_json(req, 200, buf);
+    heap_caps_free(buf);
     return ESP_OK;
 }
 
@@ -395,6 +584,9 @@ esp_err_t web_start(velo_settings_t *s) {
     cfg.server_port = SERVER_PORT;
     cfg.stack_size = 8192;
     cfg.max_uri_handlers = 16;
+    /* Required: default matcher is exact strcmp only, so the wildcard
+       static handler would never match. Enable wildcard URIs. */
+    cfg.uri_match_fn = httpd_uri_match_wildcard;
 
     err = httpd_start(&g_server, &cfg);
     if (err != ESP_OK) {
@@ -403,12 +595,15 @@ esp_err_t web_start(velo_settings_t *s) {
     }
 
     register_handler(g_server, "/", HTTP_GET, handler_root);
-    register_handler(g_server, "/*", HTTP_GET, handler_static);
     register_handler(g_server, "/api/status", HTTP_GET, handler_api_status);
     register_handler(g_server, "/api/action", HTTP_POST, handler_api_action);
     register_handler(g_server, "/api/stop", HTTP_POST, handler_api_stop);
     register_handler(g_server, "/api/settings", HTTP_GET, handler_api_settings_get);
     register_handler(g_server, "/api/settings", HTTP_POST, handler_api_settings_post);
+    register_handler(g_server, "/api/scan", HTTP_GET, handler_api_scan);
+    /* wildcard LAST: esp_http_server matches in registration order, so
+       the wildcard must come after every exact route or it swallows them */
+    register_handler(g_server, "/*", HTTP_GET, handler_static);
 
     ESP_LOGI(TAG, "control panel online at http://192.168.4.1/");
     return ESP_OK;

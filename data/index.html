@@ -17,6 +17,7 @@
 
   <nav class="tabs">
     <button class="tab active" data-tab="control">Control</button>
+    <button class="tab" data-tab="recon">Recon</button>
     <button class="tab" data-tab="settings">Settings</button>
   </nav>
 
@@ -37,19 +38,101 @@
           <span id="heap">--</span>
         </div>
       </div>
+      <div id="safe-hint" class="safe-hint">
+        Device is in SAFE pocket-mode - the ball will not auto-fire. Phone
+        controls still work.
+      </div>
 
       <div class="btn-grid">
         <button class="btn act" data-action="deauth">WiFi Deauth</button>
         <button class="btn act" data-action="ble">BLE Spam</button>
         <button class="btn act" data-action="fakeap">Fake AP</button>
       </div>
+      <div class="btn-grid func">
+        <button class="btn fn" data-action="recon">WiFi Scan</button>
+        <button class="btn fn" data-action="blescan">BLE Scan</button>
+        <button class="btn fn" data-action="probe">Probe Flood</button>
+      </div>
       <button class="btn stop" id="stop">Stop</button>
       <div id="flash" class="flash"></div>
+    </section>
+
+    <!-- ================= RECON ================= -->
+    <section id="tab-recon" class="view">
+      <div class="card scan-head">
+        <div class="row">
+          <span class="lbl">WiFi sniff</span>
+          <span id="wifi-scan" class="state idle">off</span>
+        </div>
+        <div class="row">
+          <span class="lbl">BLE scan</span>
+          <span id="ble-scan" class="state idle">off</span>
+        </div>
+        <div class="counters" id="counters">
+          <span>bcn <b id="c-beacons">0</b></span>
+          <span>prb <b id="c-probe">0</b></span>
+          <span>deauth <b id="c-deauth">0</b></span>
+          <span>eapol <b id="c-eapol">0</b></span>
+          <span>data <b id="c-data">0</b></span>
+        </div>
+      </div>
+      <div class="btn-grid func">
+        <button class="btn fn" data-action="recon">Start WiFi Scan</button>
+        <button class="btn fn" data-action="blescan">Start BLE Scan</button>
+        <button class="btn stop" id="stop2">Stop</button>
+      </div>
+      <div id="target-chip" class="target-chip hidden">
+        Target <b id="target-name"></b>
+        <button id="clear-target" class="mini">clear</button>
+      </div>
+
+      <div class="card">
+        <h2>Access points</h2>
+        <div class="table-wrap">
+          <table id="ap-table">
+            <thead>
+              <tr><th>SSID</th><th>Ch</th><th>dBm</th><th>Sec</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Clients</h2>
+        <div class="table-wrap">
+          <table id="sta-table">
+            <thead>
+              <tr><th>Client</th><th>AP</th><th>dBm</th><th></th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>BLE devices</h2>
+        <div class="table-wrap">
+          <table id="ble-table">
+            <thead>
+              <tr><th>Name</th><th>MAC</th><th>dBm</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
     </section>
 
     <!-- ================= SETTINGS ================= -->
     <section id="tab-settings" class="view">
       <form id="settings-form" class="card">
+        <h2>Helmet network</h2>
+        <label>WiFi name you connect to
+          <input type="text" id="ap_ssid" maxlength="32" autocomplete="off" spellcheck="false">
+        </label>
+        <p class="hint">Takes effect immediately; device stays on 192.168.4.1.
+          Keep it generic for stealth.</p>
+
         <h2>Fake AP</h2>
         <label>Channel
           <input type="number" id="fakeap_channel" min="1" max="14" step="1">
@@ -67,7 +150,14 @@
             <option value="0">WiFi Deauth</option>
             <option value="1">BLE Spam</option>
             <option value="2">Fake AP</option>
+            <option value="3">Off / Safe mode</option>
           </select>
+        </label>
+        <label>Arm delay after roll (ms)
+          <input type="number" id="idle_timeout_ms" min="500" max="10000" step="100">
+        </label>
+        <label>Warning window before fire (ms)
+          <input type="number" id="warning_duration_ms" min="500" max="10000" step="100">
         </label>
 
         <label class="inline">

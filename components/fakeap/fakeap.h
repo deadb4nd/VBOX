@@ -16,6 +16,10 @@ extern "C" {
 /* Brings up softAP + WiFi in AP mode. Safe to call after esp_wifi_stop(). */
 void ap_init(void);
 
+/* Set the control-panel WiFi name (SSID). Takes effect now and on every
+   future AP (re)start (after fake-AP spam too). Copies the string. */
+void ap_set_name(const char *ssid);
+
 /* Re-init AP if it was stopped (e.g. after fake-AP spam). */
 void ap_ensure_start(void);
 

