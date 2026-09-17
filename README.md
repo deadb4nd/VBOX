@@ -1,12 +1,3 @@
-<!--
-  PLACEHOLDERS TO REPLACE BEFORE YOU POST:
-    <this repo>                    -> your git clone URL
-    your@email.com                 -> your contact email (optional)
-    YOURHANDLE                     -> your X/Twitter or Discord handle
-    [add your license here ...]    -> your license (MIT/Apache-2.0 recommended)
-  Everything else is accurate to the current build.
--->
-
 # VeloBox
 
 > **Turn any phone into a WiFi attack console — from a $15 board.**
@@ -116,6 +107,39 @@ Full walkthrough: [`docs/customizing.md`](docs/customizing.md).
 
 ---
 
+## How it's built (real parts, real wiring)
+
+This isn't a devkit on a desk. Mine is a $15 board and a handful of parts I pulled out of a dead drone. You can build one for roughly the price of a takeout order.
+
+**Bill of materials**
+
+| Part | What it does | Notes |
+|---|---|---|
+| Seeed XIAO ESP32-C6 | The brain — WiFi 6 + BLE 5, antenna switch, LiPo pads | The one mandatory part |
+| Tilt / motion switch | Detects a roll — arms the device *and* wakes it from sleep | Salvaged from a drone, or ~$1 |
+| Vibration motor | Haptic feedback so you don't need lights or a screen | Pulled straight out of an old drone |
+| NPN transistor + resistor | Drives the motor | A GPIO can't source motor current, so the motor runs through the transistor. Any small NPN (2N2222, S8050, ...) works |
+| Piezo buzzer | Audible feedback / buzz counts | Cheap, optional but nice |
+| Status LED + resistor | Blinks which mode you're in | Optional — stealth builds can leave it off |
+| Single-cell LiPo | Makes it truly plantable | Plugs into the XIAO's battery pads |
+| Tiny enclosure | Makes it disappear | Boring is the point |
+
+**Wiring**
+
+| GPIO | Goes to | How |
+|---|---|---|
+| `GPIO21` | Tilt / motion switch | Switch between the pin and GND. Firmware enables the internal pull-up and uses the roll edge as the wake source |
+| `GPIO2` | Motor driver | Pin → base resistor → NPN base. Transistor collector → motor `-`, emitter → GND, motor `+` → 3V3/battery. Add a flyback diode across the motor |
+| `GPIO10` | Piezo buzzer | Pin → buzzer `+`, buzzer `-` → GND |
+| `GPIO15` | Status LED | Active **LOW** — LED cathode to the pin, anode to 3V3 through a resistor |
+| `GPIO3` / `GPIO14` | Antenna switch | Already on the XIAO. The firmware enables the external antenna — remove this init and the radio goes deaf |
+
+Every pin is defined in [`include/velobox_config.h`](include/velobox_config.h), so if you wire it differently, change one line.
+
+**The stealth bit.** No screen, no default light show, a configurable AP name that reads like every other router in the building. The whole thing runs untethered off a LiPo, sleeps when it's left alone, and wakes the instant you pick it up.
+
+---
+
 ## Build & flash it
 
 **You need:** Seeed XIAO ESP32-C6, [PlatformIO](https://platformio.org/), USB-C cable.
@@ -137,7 +161,7 @@ Optional extras (all configurable in `include/velobox_config.h`): tilt switch, b
 
 ## Under the hood
 
-- **Hardware:** Seeed XIAO ESP32-C6 (WiFi 6, 2.4 GHz + BLE 5), external antenna switch, tilt switch, buzzer, vibration motor
+- **Hardware:** Seeed XIAO ESP32-C6 (WiFi 6, 2.4 GHz + BLE 5), external antenna switch, tilt/motion switch, piezo buzzer, and a transistor-driven vibration motor salvaged from an old drone
 - **Firmware:** bare-metal **ESP-IDF** (no Arduino), NimBLE for BLE, `esp_wifi_80211_tx` for raw frame injection
 - **Console:** plain HTML/CSS/JS, served from SPIFFS over the device's own softAP
 - **Storage:** NVS for settings, SPIFFS for scripts and the web app
@@ -170,11 +194,6 @@ This is a young project and the fastest way to shape it is to jump in.
 - **Write a module** — adding a tool is one line + one function. Send it as a PR and it ships to everyone.
 - **File real bugs** — reproducible issues, logs, and steps. Vague reports get vague fixes.
 - **Share a build** — fork it, reskin it, post it. Tag me and I'll boost it.
-
-Good first contributions: a new attack module, a UI theme, a script example, or docs for your board.
-
-- **Questions / show off your build:** @YOURHANDLE
-- **Contact:** your@email.com
 
 ---
 
