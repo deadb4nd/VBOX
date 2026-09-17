@@ -2,6 +2,7 @@
 #include "ble_spam.h"
 #include "fakeap.h"
 #include "logic.h"
+#include "power.h"
 #include "recon.h"
 #include "settings.h"
 #include "settings_nvs.h"
@@ -10,10 +11,12 @@
 #include <driver/gpio.h>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <esp_sleep.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <nvs_flash.h>
+#include <soc/soc_caps.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -184,6 +187,35 @@ static void enter_safe_mode(void) {
   ESP_LOGI(TAG, ">> SAFE MODE - will not fire (roll to arm)");
 }
 
+/* Deep sleep: ball roll wakes the chip via the HP-peripheral GPIO wake
+   source, with a long timer as a keepalive so it can never wedge asleep.
+   Deep sleep is a full reset, so the box always comes back in safe mode. */
+#define SLEEP_KEEPALIVE_US (30LL * 60 * 1000000) /* 30 min */
+
+static void enter_deep_sleep(void) {
+  int64_t idle = power_idle_ms(esp_timer_get_time());
+  ESP_LOGI(TAG, ">> deep sleep after %lld ms idle - roll the ball to wake",
+           (long long)idle);
+  haptic_stop_all();
+  led_off();
+  buzzer_off();
+  motor_off();
+
+  /* esp_sleep_enable_gpio_wakeup_on_hp_periph_powerdown() configures the
+     internal pull-up for the low-level wake, so no manual pad setup here. */
+#if defined(SOC_GPIO_SUPPORT_HP_PERIPH_PD_SLEEP_WAKEUP) && \
+    SOC_GPIO_SUPPORT_HP_PERIPH_PD_SLEEP_WAKEUP
+  esp_err_t err = esp_sleep_enable_gpio_wakeup_on_hp_periph_powerdown(
+      1ULL << BALL_BTN, ESP_GPIO_WAKEUP_GPIO_LOW);
+  if (err != ESP_OK) {
+    ESP_LOGW(TAG, "gpio deep-sleep wake unavailable (%s); timer only",
+             esp_err_to_name(err));
+  }
+#endif
+  esp_sleep_enable_timer_wakeup(SLEEP_KEEPALIVE_US);
+  esp_deep_sleep_start();
+}
+
 /* track the active label so "done" logging survives action reset */
 static const char *g_run_label = "None";
 
@@ -231,6 +263,8 @@ void app_main(void) {
   ESP_LOGI(TAG, "fakeap         : ch %u, %u conn, %u TU", g_settings.fakeap_channel,
            g_settings.fakeap_max_connections, g_settings.fakeap_beacon_interval);
   ESP_LOGI(TAG, "ble spam       : %s", g_settings.ble_spam_enabled ? "enabled" : "disabled");
+  ESP_LOGI(TAG, "deep sleep     : %lu ms%s", (unsigned long)g_settings.sleep_timeout_ms,
+           g_settings.sleep_timeout_ms ? "" : " (off)");
   ESP_LOGI(TAG, "ssids          : %u loaded", g_settings.ssid_count);
   ESP_LOGI(TAG, "web            : http://192.168.4.1/");
   ESP_LOGI(TAG, "ready - roll the ball to arm (1 buzz = deauth, 2 = BLE, 3 = fakeap)");
@@ -241,6 +275,7 @@ void app_main(void) {
   int g_last_ball = gpio_get_level(BALL_BTN);
 
   int64_t last_move_time = esp_timer_get_time();
+  power_note_activity(esp_timer_get_time());
   int64_t last_tick_us = esp_timer_get_time();
   int64_t warning_start_us = 0;
   sys_state_t g_last_led_state = 0xFF;
@@ -288,6 +323,7 @@ void app_main(void) {
         selection_feedback(g_selection);
       }
       last_move_time = now;
+      power_note_activity(now);
     }
 
     /* the web settings page can change the default action while idle */
@@ -359,6 +395,9 @@ void app_main(void) {
       last_move_time = now;
     }
     g_prev_running = running_now;
+    if (running_now) {
+      power_note_activity(now);
+    }
 
     if (g_state != g_last_led_state) {
       g_last_led_state = g_state;
@@ -412,6 +451,11 @@ void app_main(void) {
     }
 
     haptic_update(dt_ms);
+
+    if (!running_now && g_state == STATE_BROWSING &&
+        power_should_sleep(now, g_settings.sleep_timeout_ms)) {
+      enter_deep_sleep();
+    }
 
     g_last_ball = ball_value;
     vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));

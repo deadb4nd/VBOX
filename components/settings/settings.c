@@ -26,6 +26,9 @@ static bool valid_channel(uint8_t ch) { return ch >= 1 && ch <= 14; }
 static bool valid_max_conn(uint8_t n) { return n >= 1 && n <= 8; }
 static bool valid_interval(uint16_t tu) { return tu >= 20 && tu <= 10000; }
 static bool valid_duration(uint16_t ms) { return ms >= 500 && ms <= 10000; }
+static bool valid_sleep(uint32_t ms) {
+    return ms == 0 || (ms >= 30000 && ms <= 3600000);
+}
 static bool ssid_ok(const char *ssid);
 
 void settings_init_default(velo_settings_t *s) {
@@ -41,6 +44,7 @@ void settings_init_default(velo_settings_t *s) {
     s->fakeap_max_connections = 4;
     s->fakeap_beacon_interval = 100;
     s->ble_spam_enabled = true;
+    s->sleep_timeout_ms = 0; /* deep sleep off by default */
 
     static const size_t default_count =
         sizeof(DEFAULT_SSIDS) / sizeof(DEFAULT_SSIDS[0]);
@@ -112,6 +116,14 @@ bool settings_set_ble_spam_enabled(velo_settings_t *s, bool on) {
         return false;
     }
     s->ble_spam_enabled = on;
+    return true;
+}
+
+bool settings_set_sleep_timeout_ms(velo_settings_t *s, uint32_t ms) {
+    if (!s || !valid_sleep(ms)) {
+        return false;
+    }
+    s->sleep_timeout_ms = ms;
     return true;
 }
 

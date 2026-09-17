@@ -1,6 +1,7 @@
 #pragma once
 
 #include "settings.h"
+#include "script.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -28,6 +29,12 @@ bool actions_start(action_t a);
 
 /* Ask the running action to stop and wait for it to finish. */
 void actions_stop(void);
+
+/* Run a parsed script: each step starts its action, waits the step
+   duration, then cleanly stops it before moving on. Returns false if an
+   action or another script is already running, or the script is empty. */
+bool actions_start_script(const script_t *s);
+bool actions_script_running(void);
 
 bool actions_is_running(void);
 action_t actions_current(void);

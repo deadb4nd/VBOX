@@ -17,6 +17,20 @@ void test_defaults_are_sane(void) {
     TEST_ASSERT_EQUAL_STRING("VeloBox", s.ap_ssid);
     TEST_ASSERT_TRUE(s.ssid_count > 0);
     TEST_ASSERT_TRUE(s.ssid_count <= SETTINGS_MAX_SSIDS);
+    TEST_ASSERT_EQUAL_UINT32(0, s.sleep_timeout_ms);
+}
+
+void test_sleep_timeout_bounds(void) {
+    velo_settings_t s;
+    settings_init_default(&s);
+
+    TEST_ASSERT_FALSE(settings_set_sleep_timeout_ms(&s, 1000));      /* too small */
+    TEST_ASSERT_FALSE(settings_set_sleep_timeout_ms(&s, 3600001));   /* too big */
+    TEST_ASSERT_TRUE(settings_set_sleep_timeout_ms(&s, 0));          /* off */
+    TEST_ASSERT_EQUAL_UINT32(0, s.sleep_timeout_ms);
+    TEST_ASSERT_TRUE(settings_set_sleep_timeout_ms(&s, 300000));     /* 5 min */
+    TEST_ASSERT_EQUAL_UINT32(300000, s.sleep_timeout_ms);
+    TEST_ASSERT_FALSE(settings_set_sleep_timeout_ms(NULL, 300000));
 }
 
 void test_out_of_range_values_rejected(void) {
@@ -136,6 +150,7 @@ void test_action_summary(void) {
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_defaults_are_sane);
+    RUN_TEST(test_sleep_timeout_bounds);
     RUN_TEST(test_out_of_range_values_rejected);
     RUN_TEST(test_ssid_add_and_bounds);
     RUN_TEST(test_ssids_text_roundtrip);

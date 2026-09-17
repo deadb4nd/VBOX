@@ -21,6 +21,11 @@ static TaskHandle_t g_action_task = NULL;
 static volatile bool g_kill_action = false;
 static action_t g_current_action = ACTION_NONE;
 
+/* script runner (sequences actions with fixed durations) */
+static TaskHandle_t g_script_task = NULL;
+static volatile bool g_kill_script = false;
+static script_t s_script;
+
 /* attack target (set from the UI before starting an action) */
 static uint8_t s_target_ap[6] = {0};
 static uint8_t s_target_client[6] = {0};
@@ -49,8 +54,11 @@ const char *actions_name(action_t a) {
     }
 }
 
-bool actions_is_running(void) { return g_action_task != NULL; }
+bool actions_is_running(void) {
+    return g_action_task != NULL || g_script_task != NULL;
+}
 action_t actions_current(void) { return g_current_action; }
+bool actions_script_running(void) { return g_script_task != NULL; }
 
 void actions_set_target(const uint8_t ap_bssid[6], const uint8_t client[6]) {
     if (ap_bssid) {
@@ -369,11 +377,7 @@ static void action_task_wrapper(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
-bool actions_start(action_t action) {
-    if (g_action_task != NULL) {
-        ESP_LOGW(TAG, "action already running");
-        return false;
-    }
+static bool action_spawn(action_t action) {
     if (action <= ACTION_NONE || action >= ACTION_COUNT) {
         return false;
     }
@@ -396,11 +400,20 @@ bool actions_start(action_t action) {
     return true;
 }
 
-void actions_stop(void) {
+bool actions_start(action_t action) {
+    if (actions_is_running()) {
+        ESP_LOGW(TAG, "action already running");
+        return false;
+    }
+    return action_spawn(action);
+}
+
+/* Stop just the running action and wait for its task to exit. Safe to call
+   from the script task (it must not set the script kill flag). */
+static void action_kill_and_join(void) {
     if (g_action_task == NULL) {
         return;
     }
-    ESP_LOGI(TAG, "cancelling action");
     g_kill_action = true;
     for (int i = 0; i < 50 && g_action_task != NULL; i++) {
         vTaskDelay(pdMS_TO_TICKS(10));
@@ -410,4 +423,108 @@ void actions_stop(void) {
         g_action_task = NULL;
         g_current_action = ACTION_NONE;
     }
+}
+
+void actions_stop(void) {
+    g_kill_script = true;
+    action_kill_and_join();
+    for (int i = 0; i < 50 && g_script_task != NULL; i++) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    if (g_script_task != NULL) {
+        vTaskDelete(g_script_task);
+        g_script_task = NULL;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Script runner                                                     */
+/* ------------------------------------------------------------------ */
+
+static action_t script_cmd_action(script_cmd_t c) {
+    switch (c) {
+    case SCRIPT_CMD_DEAUTH:
+        return ACTION_WIFI_DEAUTH;
+    case SCRIPT_CMD_RECON:
+        return ACTION_RECON;
+    case SCRIPT_CMD_BLE_SCAN:
+        return ACTION_BLE_SCAN;
+    case SCRIPT_CMD_BLE_SPAM:
+        return ACTION_BLE_SPAM;
+    case SCRIPT_CMD_PROBE:
+        return ACTION_PROBE_FLOOD;
+    case SCRIPT_CMD_FAKE_AP:
+        return ACTION_FAKE_AP;
+    default:
+        return ACTION_NONE;
+    }
+}
+
+static void sleep_interruptible(uint32_t ms) {
+    while (ms > 0 && !g_kill_script) {
+        uint32_t slice = ms > 50 ? 50 : ms;
+        vTaskDelay(pdMS_TO_TICKS(slice));
+        ms -= slice;
+    }
+}
+
+static void script_task_wrapper(void *pvParameters) {
+    (void)pvParameters;
+    ESP_LOGI(TAG, "script starting: %u step(s), ~%u ms", s_script.count,
+             script_total_ms(&s_script));
+
+    for (uint32_t i = 0; i < s_script.count && !g_kill_script; i++) {
+        script_step_t *st = &s_script.steps[i];
+
+        if (st->cmd == SCRIPT_CMD_WAIT) {
+            ESP_LOGI(TAG, "script %u/%u: wait %u ms", i + 1, s_script.count,
+                     st->duration_ms);
+            sleep_interruptible(st->duration_ms);
+            continue;
+        }
+
+        action_t a = script_cmd_action(st->cmd);
+        if (a == ACTION_NONE) {
+            continue;
+        }
+        if (st->cmd == SCRIPT_CMD_DEAUTH) {
+            actions_clear_target();
+            if (st->has_ap) {
+                actions_set_target(st->ap, st->has_client ? st->client : NULL);
+            }
+        }
+
+        if (!action_spawn(a)) {
+            ESP_LOGW(TAG, "script %u/%u declined: %s", i + 1, s_script.count,
+                     actions_name(a));
+            continue;
+        }
+        ESP_LOGI(TAG, "script %u/%u: %s for %u ms", i + 1, s_script.count,
+                 actions_name(a), st->duration_ms);
+        sleep_interruptible(st->duration_ms);
+        action_kill_and_join();
+    }
+
+    g_script_task = NULL;
+    ESP_LOGI(TAG, "script done");
+    vTaskDelete(NULL);
+}
+
+bool actions_start_script(const script_t *s) {
+    if (!s || s->count == 0) {
+        return false;
+    }
+    if (actions_is_running()) {
+        ESP_LOGW(TAG, "cannot start script: busy");
+        return false;
+    }
+    s_script = *s;
+    g_kill_script = false;
+    BaseType_t ok =
+        xTaskCreate(script_task_wrapper, "script", 4096, NULL, 5, &g_script_task);
+    if (ok != pdPASS) {
+        g_script_task = NULL;
+        return false;
+    }
+    return true;
 }

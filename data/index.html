@@ -18,6 +18,7 @@
   <nav class="tabs">
     <button class="tab active" data-tab="control">Control</button>
     <button class="tab" data-tab="recon">Recon</button>
+    <button class="tab" data-tab="script">Script</button>
     <button class="tab" data-tab="settings">Settings</button>
   </nav>
 
@@ -101,8 +102,6 @@
         <p class="hint">Captured automatically during any scan, deauth or
           probe flood. A "ready" pair (AP+client) 4-way handshake cracks
           offline with aircrack-ng / hashcat.</p>
-          probe flood. A "ready" pair (AP+client) 4-way handshake cracks
-          offline with aircrack-ng / hashcat.</p>
         <div class="table-wrap">
           <table id="cap-table">
             <thead>
@@ -150,6 +149,26 @@
       </div>
     </section>
 
+    <!-- ================= SCRIPT ================= -->
+    <section id="tab-script" class="view">
+      <div class="card">
+        <h2>Attack script</h2>
+        <p class="hint">One step per line. Commands: <b>deauth</b>,
+          <b>recon</b>, <b>blescan</b>, <b>blespam</b>, <b>probe</b>,
+          <b>fakeap</b>, <b>wait</b>. Args: <b>ap=MAC</b>,
+          <b>client=MAC</b>, <b>ms=N</b> (a bare MAC or number also works,
+          first MAC is the AP). <b>#</b> starts a comment.</p>
+        <textarea id="script-text" rows="12" spellcheck="false"
+          autocomplete="off"></textarea>
+        <div class="btn-grid func">
+          <button class="btn save" id="script-save">Save</button>
+          <button class="btn act" id="script-run">Run</button>
+          <button class="btn stop" id="script-stop">Stop</button>
+        </div>
+        <div id="script-status" class="flash"></div>
+      </div>
+    </section>
+
     <!-- ================= SETTINGS ================= -->
     <section id="tab-settings" class="view">
       <form id="settings-form" class="card">
@@ -190,6 +209,14 @@
         <label class="inline">
           <input type="checkbox" id="ble_spam_enabled"> Enable BLE spam
         </label>
+
+        <h2>Power</h2>
+        <label>Deep sleep after idle (ms, 0 = off)
+          <input type="number" id="sleep_timeout_ms" min="0" max="3600000" step="1000">
+        </label>
+        <p class="hint">For plantable mode: after this long with no roll and
+          nothing running, the box sleeps. Rolling the ball wakes it. 0 never
+          sleeps. Values between 1 and 29999 are ignored.</p>
 
         <h2>Fake AP SSIDs</h2>
         <label>One per line (max 32)

@@ -6,14 +6,18 @@
 #include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_spiffs.h"
+#include "esp_timer.h"
 #include "fakeap.h"
 #include "harvest.h"
+#include "power.h"
 #include "recon.h"
+#include "script.h"
 #include "settings.h"
 #include "settings_nvs.h"
 
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -21,6 +25,15 @@
 #define SPIFFS_MOUNT "/spiffs"
 #define SPIFFS_PARTITION "storage"
 #define SERVER_PORT 80
+#define SCRIPT_PATH SPIFFS_MOUNT "/script.txt"
+
+static const char *DEFAULT_SCRIPT =
+    "# VeloBox script - one step per line\n"
+    "# commands: deauth recon blescan blespam probe fakeap wait\n"
+    "# args: ap=MAC client=MAC ms=N  (bare MAC and bare number also work)\n"
+    "recon 15000\n"
+    "deauth 5000\n"
+    "wait 1000\n";
 
 static const char *TAG = "WEB";
 
@@ -233,6 +246,43 @@ static esp_err_t read_body(httpd_req_t *req, char *buf, size_t cap) {
     return ESP_OK;
 }
 
+/* Any HTTP request counts as activity so the box does not deep-sleep while
+   someone is poking the control panel. */
+static void note_activity(void) { power_note_activity(esp_timer_get_time()); }
+
+static size_t read_file(const char *path, char *buf, size_t cap) {
+    if (!buf || cap == 0) return 0;
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        buf[0] = '\0';
+        return 0;
+    }
+    ssize_t n = read(fd, buf, cap - 1);
+    close(fd);
+    if (n < 0) n = 0;
+    buf[n] = '\0';
+    return (size_t)n;
+}
+
+static bool write_file(const char *path, const char *data) {
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        return false;
+    }
+    size_t len = strlen(data);
+    size_t off = 0;
+    while (off < len) {
+        ssize_t n = write(fd, data + off, len - off);
+        if (n <= 0) {
+            close(fd);
+            return false;
+        }
+        off += (size_t)n;
+    }
+    close(fd);
+    return true;
+}
+
 /* ------------------------------------------------------------------ */
 /*  URI handlers                                                      */
 /* ------------------------------------------------------------------ */
@@ -268,6 +318,7 @@ static esp_err_t handler_static(httpd_req_t *req) {
 }
 
 static esp_err_t handler_api_status(httpd_req_t *req) {
+    note_activity();
     bool running = actions_is_running();
     action_t cur = actions_current();
     bool idle = !running && g_settings &&
@@ -294,6 +345,7 @@ static esp_err_t handler_api_status(httpd_req_t *req) {
 }
 
 static esp_err_t handler_api_action(httpd_req_t *req) {
+    note_activity();
     if (req->content_len <= 0) {
         send_err(req, "missing body");
         return ESP_OK;
@@ -356,6 +408,7 @@ static esp_err_t handler_api_stop(httpd_req_t *req) {
 }
 
 static esp_err_t handler_api_settings_get(httpd_req_t *req) {
+    note_activity();
     if (!g_settings) {
         send_err(req, "settings unavailable");
         return ESP_OK;
@@ -375,11 +428,12 @@ static esp_err_t handler_api_settings_get(httpd_req_t *req) {
         "\"warning_duration_ms\":%u,\"ap_ssid\":\"%s\","
         "\"fakeap_channel\":%u,"
         "\"fakeap_max_connections\":%u,\"fakeap_beacon_interval\":%u,"
-        "\"ble_spam_enabled\":%s,\"ssids\":\"%s\"}\n",
+        "\"ble_spam_enabled\":%s,\"sleep_timeout_ms\":%lu,\"ssids\":\"%s\"}\n",
         (int)g_settings->default_action, g_settings->idle_timeout_ms,
         g_settings->warning_duration_ms, ap_json, g_settings->fakeap_channel,
         g_settings->fakeap_max_connections, g_settings->fakeap_beacon_interval,
-        g_settings->ble_spam_enabled ? "true" : "false", ssids_json);
+        g_settings->ble_spam_enabled ? "true" : "false",
+        (unsigned long)g_settings->sleep_timeout_ms, ssids_json);
     if (n < 0) {
         send_err(req, "encoding failed");
         return ESP_OK;
@@ -388,6 +442,7 @@ static esp_err_t handler_api_settings_get(httpd_req_t *req) {
 }
 
 static esp_err_t handler_api_settings_post(httpd_req_t *req) {
+    note_activity();
     if (!g_settings) {
         send_err(req, "settings unavailable");
         return ESP_OK;
@@ -422,6 +477,9 @@ static esp_err_t handler_api_settings_post(httpd_req_t *req) {
     if (form_value(body, "ble_spam_enabled", v, sizeof(v))) {
         settings_set_ble_spam_enabled(g_settings, as_bool(v));
     }
+    if (form_value(body, "sleep_timeout_ms", v, sizeof(v))) {
+        settings_set_sleep_timeout_ms(g_settings, (uint32_t)strtoul(v, NULL, 10));
+    }
     if (form_value(body, "ssids", ssids, sizeof(ssids))) {
         settings_set_ssids_text(g_settings, ssids);
     }
@@ -429,12 +487,13 @@ static esp_err_t handler_api_settings_post(httpd_req_t *req) {
     settings_nvs_save(g_settings);
     ap_set_name(g_settings->ap_ssid); /* re-broadcast AP name live */
     ESP_LOGI(TAG, "settings saved: action=%s idle=%ums warning=%ums "
-                  "channel=%u conn=%u tu=%u ble=%s ssids=%u ap=%s",
+                  "channel=%u conn=%u tu=%u ble=%s sleep=%lums ssids=%u ap=%s",
              actions_name((action_t)((int)g_settings->default_action + 1)),
              g_settings->idle_timeout_ms, g_settings->warning_duration_ms,
              g_settings->fakeap_channel, g_settings->fakeap_max_connections,
              g_settings->fakeap_beacon_interval,
              g_settings->ble_spam_enabled ? "yes" : "no",
+             (unsigned long)g_settings->sleep_timeout_ms,
              g_settings->ssid_count, g_settings->ap_ssid);
     send_ok(req);
     return ESP_OK;
@@ -656,6 +715,87 @@ static esp_err_t handler_api_captures_clear(httpd_req_t *req) {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Script API                                                        */
+/* ------------------------------------------------------------------ */
+
+/* GET /api/script -> {"text":"...","steps":N,"running":bool} */
+static esp_err_t handler_api_script_get(httpd_req_t *req) {
+    note_activity();
+    char text[SCRIPT_MAX_TEXT];
+    read_file(SCRIPT_PATH, text, sizeof(text));
+
+    script_t sc;
+    uint32_t steps = script_parse(text, &sc);
+    size_t cap = strlen(text) * 2 + 96;
+    char *out = heap_caps_malloc(cap, MALLOC_CAP_8BIT);
+    if (!out) {
+        send_err(req, "oom");
+        return ESP_OK;
+    }
+    int w = snprintf(out, cap, "{\"steps\":%lu,\"running\":%s,\"text\":\"",
+                     (unsigned long)steps,
+                     actions_script_running() ? "true" : "false");
+    w += (int)json_escape(out + w, cap - (size_t)w, text);
+    if ((size_t)w + 3 < cap) {
+        out[w++] = '"';
+        out[w++] = '}';
+        out[w++] = '\n';
+        out[w] = '\0';
+    }
+    esp_err_t err = httpd_send_json(req, 200, out);
+    heap_caps_free(out);
+    return err;
+}
+
+/* POST /api/script  (raw body = script text) -> save to SPIFFS */
+static esp_err_t handler_api_script_post(httpd_req_t *req) {
+    note_activity();
+    char text[SCRIPT_MAX_TEXT];
+    read_body(req, text, sizeof(text));
+    if (!write_file(SCRIPT_PATH, text)) {
+        send_err(req, "write failed");
+        return ESP_OK;
+    }
+    script_t sc;
+    uint32_t steps = script_parse(text, &sc);
+    char out[64];
+    snprintf(out, sizeof(out), "{\"ok\":true,\"steps\":%lu}\n",
+             (unsigned long)steps);
+    return httpd_send_json(req, 200, out);
+}
+
+/* POST /api/script/run  (optional raw body = script text, else saved file) */
+static esp_err_t handler_api_script_run(httpd_req_t *req) {
+    note_activity();
+    if (actions_is_running()) {
+        send_err(req, "already running");
+        return ESP_OK;
+    }
+    char text[SCRIPT_MAX_TEXT];
+    if (req->content_len > 0) {
+        read_body(req, text, sizeof(text));
+    } else if (read_file(SCRIPT_PATH, text, sizeof(text)) == 0) {
+        send_err(req, "no script");
+        return ESP_OK;
+    }
+
+    script_t sc;
+    uint32_t steps = script_parse(text, &sc);
+    if (steps == 0) {
+        send_err(req, "empty script");
+        return ESP_OK;
+    }
+    if (!actions_start_script(&sc)) {
+        send_err(req, "start failed");
+        return ESP_OK;
+    }
+    char out[64];
+    snprintf(out, sizeof(out), "{\"ok\":true,\"steps\":%lu}\n",
+             (unsigned long)steps);
+    return httpd_send_json(req, 200, out);
+}
+
+/* ------------------------------------------------------------------ */
 /*  Init                                                              */
 /* ------------------------------------------------------------------ */
 
@@ -694,6 +834,12 @@ esp_err_t web_start(velo_settings_t *s) {
         return err;
     }
 
+    /* seed the script editor with a working example on first boot */
+    char seed[SCRIPT_MAX_TEXT];
+    if (read_file(SCRIPT_PATH, seed, sizeof(seed)) == 0) {
+        write_file(SCRIPT_PATH, DEFAULT_SCRIPT);
+    }
+
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.server_port = SERVER_PORT;
     cfg.stack_size = 8192;
@@ -720,6 +866,10 @@ esp_err_t web_start(velo_settings_t *s) {
                      handler_api_captures_download);
     register_handler(g_server, "/api/captures/clear", HTTP_POST,
                      handler_api_captures_clear);
+    register_handler(g_server, "/api/script", HTTP_GET, handler_api_script_get);
+    register_handler(g_server, "/api/script", HTTP_POST, handler_api_script_post);
+    register_handler(g_server, "/api/script/run", HTTP_POST,
+                     handler_api_script_run);
     /* wildcard LAST: esp_http_server matches in registration order, so
        the wildcard must come after every exact route or it swallows them */
     register_handler(g_server, "/*", HTTP_GET, handler_static);

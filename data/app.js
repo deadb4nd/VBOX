@@ -260,6 +260,49 @@ document.addEventListener("click", (e) => {
 setInterval(renderRecon, 2000);
 renderRecon();
 
+/* ---------------- script ---------------- */
+
+function scriptMsg(msg, ok) {
+  const el = $("script-status");
+  el.textContent = msg;
+  el.className = "flash show " + (ok ? "ok" : "err");
+  clearTimeout(scriptMsg._t);
+  scriptMsg._t = setTimeout(() => (el.className = "flash"), 4000);
+}
+
+let scriptLoaded = false;
+async function loadScript() {
+  if (scriptLoaded) return;
+  try {
+    const s = await api("/api/script");
+    $("script-text").value = s.text || "";
+    scriptLoaded = true;
+    scriptMsg(`${s.steps} step(s)`, true);
+  } catch (e) {
+    scriptMsg("Could not load script", false);
+  }
+}
+
+async function postScript(path, verb) {
+  try {
+    const r = await api(path, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: $("script-text").value,
+    });
+    scriptMsg(`${verb} ${r.steps} step(s)`, true);
+    pollStatus();
+  } catch (e) {
+    scriptMsg(e.message || "Failed", false);
+  }
+}
+
+$("script-save").addEventListener("click", () => postScript("/api/script", "Saved"));
+$("script-run").addEventListener("click", () => postScript("/api/script/run", "Running"));
+$("script-stop").addEventListener("click", stopAll);
+
+loadScript();
+
 /* ---------------- settings ---------------- */
 
 async function loadSettings() {
@@ -273,6 +316,7 @@ async function loadSettings() {
     $("fakeap_max_connections").value = s.fakeap_max_connections;
     $("fakeap_beacon_interval").value = s.fakeap_beacon_interval;
     $("ble_spam_enabled").checked = s.ble_spam_enabled;
+    $("sleep_timeout_ms").value = s.sleep_timeout_ms || 0;
     $("ssids").value = s.ssids;
   } catch (e) {
     flash("Could not load settings", false);
@@ -290,6 +334,7 @@ $("settings-form").addEventListener("submit", async (ev) => {
     fakeap_max_connections: $("fakeap_max_connections").value,
     fakeap_beacon_interval: $("fakeap_beacon_interval").value,
     ble_spam_enabled: $("ble_spam_enabled").checked ? "1" : "0",
+    sleep_timeout_ms: $("sleep_timeout_ms").value || "0",
     ssids: $("ssids").value,
   });
   const msgEl = $("save-msg");

@@ -12,7 +12,7 @@ Every WiFi tool today forces a compromise:
 | **Flipper Zero + WiFi devboard** | Cute, accessible, apps ecosystem | SD offload, UART bottleneck, no plantable mode |
 | **WiFi Pineapple Pager** | Purpose-built rogue AP, DuckyScript | $300+, desk-bound, phone UX secondary |
 | **ESP32 Marauder (standalone)** | CLI captures, PMKID, cheap ($25) | OLED+buttons, serial expertise, no phone-native |
-| **Pebble** (this project) | **Phone-native, plantable, stealth, one-tap** | V1 — no PMKID, no evil-portal yet |
+| **Pebble** (this project) | **Phone-native, plantable, stealth, one-tap, scriptable** | no evil-portal yet |
 
 ## The "impossible to refuse" demo
 
@@ -43,7 +43,7 @@ Three taps on your phone:
 
 ## Roadmap
 
-### V1 — "The Harvester" (current)
+### V1 — "The Harvester"
 - WiFi recon (AP + client tables, live counters)
 - Real deauth (broadcast + targeted, `esp_wifi_80211_tx`)
 - Probe flood, BLE scan, BLE spam
@@ -61,10 +61,18 @@ Three taps on your phone:
 - **BLE remote control** — drive the device over BLE instead of WiFi for total stealth (phone talks BLE, device stays hidden)
 
 ### V3 — "The Pocket Red Team Kit"
-- **Deep sleep + motion trigger** — ball-tilt wakes from deep sleep, fires on movement detection
-- **GPS wardriving** (add-on) — log BSSIDs + handshakes with GPS coordinates
-- **Scriptable attacks** — user-defined attack sequences via JSON/JS on SD
-- **Hardware badge** — community events (DEF CON, BSides) as a free-tier training device
+- **Scriptable attacks** — *done*: a tiny per-line script language
+  (`deauth`, `recon`, `blescan`, `blespam`, `probe`, `fakeap`, `wait` with
+  `ap=`/`client=`/`ms=` args) edited in a new **Script** tab, persisted to
+  SPIFFS `/spiffs/script.txt`, executed step-by-step by a dedicated task.
+  Save, run, and stop from the phone.
+- **Deep sleep + motion trigger** — *done*: after a configurable idle time
+  (Settings → Power, default off) the box deep-sleeps; the ball tilt wakes it
+  again. A deep sleep is a full reset, so it always wakes into safe mode. A
+  30-minute timer keepalive prevents ever wedging asleep.
+- **Excluded by product decision**: GPS wardriving, hardware badge, SD/JSON
+  scripting. The target user is a plantable, phone-native pocket device, not
+  a wardriving logger or a conference trinket.
 
 ### V4 — "Community Platform"
 - Open-source public release with app store (SPIFFS-based plugin system)

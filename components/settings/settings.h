@@ -26,6 +26,7 @@ typedef struct {
     bool ble_spam_enabled;                 /* allow BLE spam action             */
     char ssids[SETTINGS_MAX_SSIDS][SETTINGS_SSID_MAX_LEN];
     uint32_t ssid_count;
+    uint32_t sleep_timeout_ms;             /* 0 = never; else 30000..3600000    */
 } velo_settings_t;
 
 void settings_init_default(velo_settings_t *s);
@@ -38,6 +39,7 @@ bool settings_set_fakeap_channel(velo_settings_t *s, uint8_t ch);
 bool settings_set_fakeap_max_connections(velo_settings_t *s, uint8_t n);
 bool settings_set_fakeap_beacon_interval(velo_settings_t *s, uint16_t tu);
 bool settings_set_ble_spam_enabled(velo_settings_t *s, bool on);
+bool settings_set_sleep_timeout_ms(velo_settings_t *s, uint32_t ms);
 
 uint32_t settings_ssid_count(const velo_settings_t *s);
 bool settings_add_ssid(velo_settings_t *s, const char *ssid);
