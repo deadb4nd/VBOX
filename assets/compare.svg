@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 700" width="1400" height="700" role="img" aria-label="Comparison of VeloBox against Flipper Zero, WiFi Pineapple Pager, ESP32 Marauder and Biscuit Pro">
+  <defs>
+    <linearGradient id="cmbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a0c11"/>
+      <stop offset="1" stop-color="#060709"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1400" height="700" rx="24" fill="url(#cmbg)"/>
+  <rect x="1" y="1" width="1398" height="698" rx="23" fill="none" stroke="#1c212b"/>
+
+  <text x="60" y="66" fill="#e9ecf3" font-family="'Segoe UI',Arial,sans-serif" font-size="30" font-weight="700">Where VeloBox sits among the options</text>
+  <text x="60" y="98" fill="#8a93a4" font-family="'Segoe UI',Arial,sans-serif" font-size="18">Different bets, honestly compared. VeloBox wins on openness and cost, not on radios.</text>
+
+  <!-- column headers -->
+  <g font-family="'Segoe UI',Arial,sans-serif" font-size="15" font-weight="600" fill="#8a93a4">
+    <text x="515" y="160" text-anchor="middle">Phone-native</text>
+    <text x="685" y="160" text-anchor="middle">Plantable</text>
+    <text x="855" y="160" text-anchor="middle">No SD card</text>
+    <text x="1025" y="160" text-anchor="middle">Open source</text>
+    <text x="1195" y="160" text-anchor="middle">Under $100</text>
+  </g>
+  <line x1="50" y1="178" x2="1330" y2="178" stroke="#2b3240"/>
+
+  <!-- row labels -->
+  <g font-family="'Segoe UI',Arial,sans-serif" font-size="18" fill="#e9ecf3">
+    <text x="80" y="231">Flipper Zero + WiFi devboard</text>
+    <text x="80" y="309">WiFi Pineapple Pager</text>
+    <text x="80" y="387">ESP32 Marauder</text>
+    <text x="80" y="465">Biscuit Pro</text>
+  </g>
+  <line x1="50" y1="264" x2="1330" y2="264" stroke="#141922"/>
+  <line x1="50" y1="342" x2="1330" y2="342" stroke="#141922"/>
+  <line x1="50" y1="420" x2="1330" y2="420" stroke="#141922"/>
+  <line x1="50" y1="498" x2="1330" y2="498" stroke="#141922"/>
+
+  <!-- VeloBox highlighted row -->
+  <rect x="50" y="504" width="1280" height="78" rx="14" fill="rgba(124,140,255,0.10)" stroke="#7c8cff"/>
+  <text x="80" y="551" fill="#98a5ff" font-family="'Segoe UI',Arial,sans-serif" font-size="20" font-weight="700">VeloBox</text>
+
+  <!-- ===== green checks ===== -->
+  <g fill="none" stroke="#34d399" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round">
+    <!-- marauder row y=381 -->
+    <path d="M677 382 L682 387 L693 374"/>
+    <path d="M847 382 L852 387 L863 374"/>
+    <path d="M1017 382 L1022 387 L1033 374"/>
+    <path d="M1187 382 L1192 387 L1203 374"/>
+    <!-- biscuit row y=459 -->
+    <path d="M507 460 L512 465 L523 452"/>
+    <path d="M677 460 L682 465 L693 452"/>
+    <path d="M847 460 L852 465 L863 452"/>
+    <!-- velobox row y=537 -->
+    <path d="M507 538 L512 543 L523 530"/>
+    <path d="M677 538 L682 543 L693 530"/>
+    <path d="M847 538 L852 543 L863 530"/>
+    <path d="M1017 538 L1022 543 L1033 530"/>
+    <path d="M1187 538 L1192 543 L1203 530"/>
+  </g>
+
+  <!-- ===== red crosses ===== -->
+  <g fill="none" stroke="#f0596b" stroke-width="2.8" stroke-linecap="round">
+    <!-- flipper y=225 -->
+    <path d="M679 219 L691 231 M691 219 L679 231"/>
+    <path d="M849 219 L861 231 M861 219 L849 231"/>
+    <path d="M1189 219 L1201 231 M1201 219 L1189 231"/>
+    <!-- pager y=303 -->
+    <path d="M679 297 L691 309 M691 297 L679 309"/>
+    <path d="M1019 297 L1031 309 M1031 297 L1019 309"/>
+    <path d="M1189 297 L1201 309 M1201 297 L1189 309"/>
+    <!-- marauder y=381 -->
+    <path d="M509 375 L521 387 M521 375 L509 387"/>
+    <!-- biscuit y=459 -->
+    <path d="M1019 453 L1031 465 M1031 453 L1019 465"/>
+    <path d="M1189 453 L1201 465 M1201 453 L1189 465"/>
+  </g>
+
+  <!-- ===== amber partials ===== -->
+  <g fill="none" stroke="#e3a83f" stroke-width="3.4" stroke-linecap="round">
+    <!-- flipper y=225 -->
+    <path d="M506 225 L524 225"/>
+    <path d="M1016 225 L1034 225"/>
+    <!-- pager y=303 -->
+    <path d="M506 303 L524 303"/>
+    <path d="M846 303 L864 303"/>
+  </g>
+
+  <!-- legend -->
+  <g font-family="'Segoe UI',Arial,sans-serif" font-size="14">
+    <path d="M53 627 L58 632 L69 619" fill="none" stroke="#34d399" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="82" y="632" fill="#8a93a4">Yes</text>
+    <line x1="150" y1="624" x2="168" y2="624" stroke="#e3a83f" stroke-width="3.4" stroke-linecap="round"/>
+    <text x="180" y="632" fill="#8a93a4">Partial / with caveats</text>
+    <path d="M403 619 L415 631 M415 619 L403 631" fill="none" stroke="#f0596b" stroke-width="2.8" stroke-linecap="round"/>
+    <text x="428" y="632" fill="#8a93a4">No</text>
+  </g>
+</svg>

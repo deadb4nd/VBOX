@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" width="1200" height="400" role="img" aria-label="VeloBox — turn any phone into a WiFi attack console">
+  <defs>
+    <linearGradient id="bgg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a0c11"/>
+      <stop offset="1" stop-color="#07080a"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#7c8cff" stop-opacity="0.42"/>
+      <stop offset="0.55" stop-color="#7c8cff" stop-opacity="0.12"/>
+      <stop offset="1" stop-color="#7c8cff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="rule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7c8cff" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#7c8cff"/>
+      <stop offset="1" stop-color="#7c8cff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="round"><rect width="1200" height="400" rx="26"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#round)">
+    <rect width="1200" height="400" fill="url(#bgg)"/>
+    <circle cx="255" cy="200" r="260" fill="url(#glow)"/>
+
+    <!-- faint grid -->
+    <g stroke="#1a1f29" stroke-width="1" opacity="0.55">
+      <path d="M0 100 H1200 M0 200 H1200 M0 300 H1200"/>
+      <path d="M150 0 V400 M350 0 V400 M550 0 V400 M750 0 V400 M950 0 V400 M1150 0 V400"/>
+    </g>
+
+    <!-- ripple logomark -->
+    <g transform="translate(255 200) scale(4.2) translate(-20 -20)">
+      <g transform="rotate(-35 20 20)" fill="none" stroke="#7c8cff">
+        <circle cx="20" cy="20" r="15.5" stroke-width="1.6" stroke-dasharray="72 25" opacity="0.5"/>
+        <circle cx="20" cy="20" r="9.5" stroke-width="2.1" stroke-dasharray="44 16" opacity="0.95"/>
+      </g>
+      <circle cx="20" cy="20" r="3.2" fill="#98a5ff"/>
+    </g>
+
+    <text x="470" y="150" fill="#e9ecf3" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="92" font-weight="700" letter-spacing="1">VeloBox</text>
+    <rect x="472" y="176" width="120" height="4" rx="2" fill="url(#rule)"/>
+    <text x="472" y="224" fill="#8a93a4" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="27" font-weight="400">Turn any phone into a WiFi attack console.</text>
+    <text x="472" y="260" fill="#525a68" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="21" font-weight="400">No screen. No SD card. No laptop. Just a $15 board you can plant.</text>
+
+    <!-- chips -->
+    <g font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="17" font-weight="600">
+      <g>
+        <rect x="472" y="292" width="104" height="38" rx="19" fill="#12151c" stroke="#2b3240"/>
+        <text x="524" y="317" fill="#e9ecf3" text-anchor="middle">WiFi 6</text>
+      </g>
+      <g>
+        <rect x="588" y="292" width="92" height="38" rx="19" fill="#12151c" stroke="#2b3240"/>
+        <text x="634" y="317" fill="#e9ecf3" text-anchor="middle">BLE 5</text>
+      </g>
+      <g>
+        <rect x="692" y="292" width="158" height="38" rx="19" fill="#12151c" stroke="#2b3240"/>
+        <text x="771" y="317" fill="#e9ecf3" text-anchor="middle">Phone-native</text>
+      </g>
+      <g>
+        <rect x="862" y="292" width="150" height="38" rx="19" fill="rgba(124,140,255,0.12)" stroke="#7c8cff"/>
+        <text x="937" y="317" fill="#98a5ff" text-anchor="middle">Open source</text>
+      </g>
+    </g>
+  </g>
+
+  <rect x="1" y="1" width="1198" height="398" rx="25" fill="none" stroke="#1c212b"/>
+</svg>

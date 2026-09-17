@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 380" width="1400" height="380" role="img" aria-label="The VeloBox workflow: recon, deauth and harvest, download, crack offline">
+  <defs>
+    <linearGradient id="wbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a0c11"/>
+      <stop offset="1" stop-color="#07080a"/>
+    </linearGradient>
+    <linearGradient id="step" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#141824"/>
+      <stop offset="1" stop-color="#0f1218"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="7" refY="6" orient="auto">
+      <path d="M1 1 L8 6 L1 11" fill="none" stroke="#7c8cff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <rect width="1400" height="380" rx="24" fill="url(#wbg)"/>
+  <rect x="1" y="1" width="1398" height="378" rx="23" fill="none" stroke="#1c212b"/>
+
+  <text x="70" y="62" fill="#e9ecf3" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="30" font-weight="700">From pocket to cracked, in three taps</text>
+  <text x="70" y="94" fill="#8a93a4" font-family="'Segoe UI','Helvetica Neue',Arial,sans-serif" font-size="18">The whole operation runs in your phone browser. No app. No serial. No SD card.</text>
+
+  <!-- stage 1 -->
+  <g transform="translate(70,130)">
+    <rect width="290" height="200" rx="16" fill="url(#step)" stroke="#2b3240"/>
+    <rect width="290" height="4" rx="2" fill="#7c8cff"/>
+    <circle cx="42" cy="52" r="20" fill="rgba(124,140,255,0.14)" stroke="#7c8cff"/>
+    <text x="42" y="59" fill="#98a5ff" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="19" font-weight="700">1</text>
+    <g transform="translate(190,42)" fill="none" stroke="#7c8cff" stroke-width="2.2" stroke-linecap="round">
+      <path d="M-26 18 A40 40 0 0 1 26 18"/>
+      <path d="M-15 28 A22 22 0 0 1 15 28"/>
+      <circle cx="0" cy="38" r="3.4" fill="#7c8cff" stroke="none"/>
+    </g>
+    <text x="24" y="108" fill="#e9ecf3" font-family="'Segoe UI',Arial,sans-serif" font-size="25" font-weight="700">Recon</text>
+    <text x="24" y="140" fill="#8a93a4" font-family="'Segoe UI',Arial,sans-serif" font-size="16">Open 192.168.4.1 and</text>
+    <text x="24" y="162" fill="#8a93a4" font-family="'Segoe UI',Arial,sans-serif" font-size="16">watch the AP and client</text>
+    <text x="24" y="184" fill="#8a93a4" font-family="'Segoe UI',Arial,sans-serif" font-size="16">tables fill in live.</text>
+  </g>
+
+  <line x1="372" y1="230" x2="408" y2="230" stroke="#7c8cff" stroke-width="2.2" marker-end="url(#arrow)"/>
+
+  <!-- stage 2 -->
+  <g transform="translate(420,130)">
+    <rect width="290" height="200" rx="16" fill="url(#step)" stroke="#2b3240"/>
+    <rect width="290" height="4" rx="2" fill="#f0596b"/>
+    <circle cx="42" cy="52" r="20" fill="rgba(240,89,107,0.14)" stroke="#f0596b"/>
+    <text x="42" y="59" fill="#f0596b" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="19" font-weight="700">2</text>
+    <g transform="translate(196,44)" fill="none" stroke="#f0596b" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M4 -24 L-14 4 H0 L-4 26 L16 -6 H2 Z"/>
+    </g>
+    <text x="24" y="108" fill="#e9ecf3" font-family="'Segoe UI',Arial,sans-serif" font-size="25" font-weight="700">Deauth + harvest</text>
+    <text x="24" y="140" fill="#8a93a4" font-family="'Segoe UI',Arial,sans-serif" font-size="16">Tap a target. Real 802.11</text>
+    <text x="24" y="162" fill="#8a93a4" font-family="'Segoe UI',Arial,sans-serif" font-size="16">frames, and the 4-way</text>
+    <text x="24" y="184" fill="#8a93a4" font-family="'Segoe UI',Arial,sans-serif" font-size="16">handshake is captured for you.</text>
+  </g>
+
+  <line x1="722" y1="230" x2="758" y2="230" stroke="#7c8cff" stroke-width="2.2" marker-end="url(#arrow)"/>
+
+  <!-- stage 3 -->
+  <g transform="translate(770,130)">
+    <rect width="290" height="200" rx="16" fill="url(#step)" stroke="#2b3240"/>
+    <rect width="290" height="4" rx="2" fill="#7c8cff"/>
+    <circle cx="42" cy="52" r="20" fill="rgba(124,140,255,0.14)" stroke="#7c8cff"/>
+    <text x="42" y="59" fill="#98a5ff" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="19" font-weight="700">3</text>
+    <g transform="translate(196,44)" fill="none" stroke="#7c8cff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M0 -24 V14"/><path d="M-13 2 L0 15 L13 2"/>
+      <path d="M-22 28 H22" stroke-width="2.6"/>
+    </g>
+    <text x="24" y="108" fill="#e9ecf3" font-family="'Segoe UI',Arial,sans-serif" font-size="25" font-weight="700">Download</text>
+    <text x="24" y="140" fill="#8a93a4" font-family="'Segoe UI',Arial,sans-serif" font-size="16">Save the .pcap straight</text>
+    <text x="24" y="162" fill="#8a93a4" font-family="'Segoe UI',Arial,sans-serif" font-size="16">from the browser. PMKID</text>
+    <text x="24" y="184" fill="#8a93a4" font-family="'Segoe UI',Arial,sans-serif" font-size="16">captures are one tap too.</text>
+  </g>
+
+  <line x1="1072" y1="230" x2="1108" y2="230" stroke="#7c8cff" stroke-width="2.2" marker-end="url(#arrow)"/>
+
+  <!-- stage 4 -->
+  <g transform="translate(1120,130)">
+    <rect width="210" height="200" rx="16" fill="url(#step)" stroke="#2b3240"/>
+    <rect width="210" height="4" rx="2" fill="#34d399"/>
+    <circle cx="42" cy="52" r="20" fill="rgba(52,211,153,0.14)" stroke="#34d399"/>
+    <text x="42" y="59" fill="#34d399" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="19" font-weight="700">4</text>
+    <g transform="translate(150,44)" fill="none" stroke="#34d399" stroke-width="2.3" stroke-linecap="round">
+      <circle cx="-4" cy="-2" r="12"/>
+      <path d="M4 6 L18 20"/><path d="M12 14 L18 8 M17 19 L21 15"/>
+    </g>
+    <text x="24" y="108" fill="#e9ecf3" font-family="'Segoe UI',Arial,sans-serif" font-size="25" font-weight="700">Crack</text>
+    <text x="24" y="140" fill="#8a93a4" font-family="'Segoe UI',Arial,sans-serif" font-size="16">hashcat -m 22000</text>
+    <text x="24" y="162" fill="#8a93a4" font-family="'Segoe UI',Arial,sans-serif" font-size="16">on your own GPU.</text>
+    <text x="24" y="184" fill="#8a93a4" font-family="'Segoe UI',Arial,sans-serif" font-size="16">Fast and reliable.</text>
+  </g>
+</svg>

@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 820" width="1400" height="820" role="img" aria-label="VeloBox wiring diagram: XIAO ESP32-C6 to tilt switch, buzzer, motor driver, LED and battery">
+  <defs>
+    <linearGradient id="wgbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a0c11"/>
+      <stop offset="1" stop-color="#060709"/>
+    </linearGradient>
+    <linearGradient id="board" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#141824"/>
+      <stop offset="1" stop-color="#0e1119"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1400" height="820" rx="24" fill="url(#wgbg)"/>
+  <rect x="1" y="1" width="1398" height="818" rx="23" fill="none" stroke="#1c212b"/>
+
+  <text x="60" y="66" fill="#e9ecf3" font-family="'Segoe UI',Arial,sans-serif" font-size="30" font-weight="700">Wiring it up</text>
+  <text x="60" y="98" fill="#8a93a4" font-family="'Segoe UI',Arial,sans-serif" font-size="18">Five parts, a handful of wires, no custom PCB. Change a pin in velobox_config.h if you wire it differently.</text>
+
+  <!-- center board -->
+  <g>
+    <rect x="560" y="170" width="280" height="500" rx="20" fill="url(#board)" stroke="#2b3240" stroke-width="2"/>
+    <text x="700" y="214" fill="#e9ecf3" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="20" font-weight="700">Seeed XIAO</text>
+    <text x="700" y="240" fill="#8a93a4" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="15">ESP32-C6</text>
+    <g transform="translate(700,300) scale(1.5) translate(-20 -20)">
+      <g transform="rotate(-35 20 20)" fill="none" stroke="#7c8cff">
+        <circle cx="20" cy="20" r="15.5" stroke-width="1.4" stroke-dasharray="72 25" opacity="0.45"/>
+        <circle cx="20" cy="20" r="9.5" stroke-width="1.8" stroke-dasharray="44 16" opacity="0.9"/>
+      </g>
+      <circle cx="20" cy="20" r="3" fill="#98a5ff"/>
+    </g>
+    <text x="700" y="420" fill="#525a68" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13">WiFi 6 · BLE 5</text>
+    <text x="700" y="442" fill="#525a68" text-anchor="middle" font-family="'Segoe UI',Arial,sans-serif" font-size="13">USB-C · LiPo pads</text>
+
+    <!-- board pin labels -->
+    <g font-family="ui-monospace,'SFMono-Regular',Consolas,monospace" font-size="13">
+      <text x="576" y="500" fill="#7c8cff">GPIO21</text>
+      <text x="576" y="560" fill="#8a93a4">GND</text>
+      <text x="824" y="500" fill="#7c8cff" text-anchor="end">GPIO2</text>
+      <text x="824" y="560" fill="#f0596b" text-anchor="end">3V3</text>
+    </g>
+    <g fill="#1c212b">
+      <rect x="552" y="490" width="8" height="14" rx="3"/>
+      <rect x="552" y="550" width="8" height="14" rx="3"/>
+      <rect x="840" y="490" width="8" height="14" rx="3"/>
+      <rect x="840" y="550" width="8" height="14" rx="3"/>
+    </g>
+  </g>
+
+  <!-- left cards -->
+  <g font-family="'Segoe UI',Arial,sans-serif">
+    <g transform="translate(100,220)">
+      <rect width="380" height="130" rx="14" fill="#0d0f14" stroke="#1c212b"/>
+      <rect x="0" y="0" width="4" height="130" rx="2" fill="#7c8cff"/>
+      <text x="26" y="40" fill="#e9ecf3" font-size="20" font-weight="700">Tilt / motion switch</text>
+      <text x="26" y="70" fill="#8a93a4" font-size="14">The wake source and the arm switch.</text>
+      <text x="26" y="100" fill="#98a5ff" font-family="ui-monospace,Consolas,monospace" font-size="13">GPIO21 → switch → GND</text>
+      <text x="26" y="120" fill="#525a68" font-size="12">Internal pull-up enabled in firmware.</text>
+    </g>
+    <g transform="translate(100,400)">
+      <rect width="380" height="130" rx="14" fill="#0d0f14" stroke="#1c212b"/>
+      <rect x="0" y="0" width="4" height="130" rx="2" fill="#7c8cff"/>
+      <text x="26" y="40" fill="#e9ecf3" font-size="20" font-weight="700">Piezo buzzer</text>
+      <text x="26" y="70" fill="#8a93a4" font-size="14">Buzz feedback for mode and confirms.</text>
+      <text x="26" y="100" fill="#98a5ff" font-family="ui-monospace,Consolas,monospace" font-size="13">GPIO10 → buzzer+ · buzzer- → GND</text>
+      <text x="26" y="120" fill="#525a68" font-size="12">Optional — leave it out for silent builds.</text>
+    </g>
+    <g transform="translate(100,580)">
+      <rect width="380" height="110" rx="14" fill="#0d0f14" stroke="#1c212b"/>
+      <rect x="0" y="0" width="4" height="110" rx="2" fill="#e3a83f"/>
+      <text x="26" y="40" fill="#e9ecf3" font-size="20" font-weight="700">Single-cell LiPo</text>
+      <text x="26" y="70" fill="#8a93a4" font-size="14">Makes it untethered and plantable.</text>
+      <text x="26" y="98" fill="#e3a83f" font-family="ui-monospace,Consolas,monospace" font-size="13">→ XIAO BAT pads</text>
+    </g>
+  </g>
+
+  <!-- right cards -->
+  <g font-family="'Segoe UI',Arial,sans-serif">
+    <g transform="translate(920,220)">
+      <rect width="380" height="130" rx="14" fill="#0d0f14" stroke="#1c212b"/>
+      <rect x="0" y="0" width="4" height="130" rx="2" fill="#7c8cff"/>
+      <text x="26" y="40" fill="#e9ecf3" font-size="20" font-weight="700">Status LED</text>
+      <text x="26" y="70" fill="#8a93a4" font-size="14">Blinks which mode is armed.</text>
+      <text x="26" y="100" fill="#98a5ff" font-family="ui-monospace,Consolas,monospace" font-size="13">3V3 → R → LED → GPIO15</text>
+      <text x="26" y="120" fill="#525a68" font-size="12">Active LOW. Omit for a fully dark build.</text>
+    </g>
+    <g transform="translate(920,400)">
+      <rect width="380" height="150" rx="14" fill="#0d0f14" stroke="#1c212b"/>
+      <rect x="0" y="0" width="4" height="150" rx="2" fill="#34d399"/>
+      <text x="26" y="40" fill="#e9ecf3" font-size="20" font-weight="700">Motor driver</text>
+      <text x="26" y="70" fill="#8a93a4" font-size="14">A GPIO can't drive a motor, so it drives a transistor.</text>
+      <text x="26" y="100" fill="#98a5ff" font-family="ui-monospace,Consolas,monospace" font-size="13">GPIO2 → 1k → NPN base</text>
+      <text x="26" y="122" fill="#98a5ff" font-family="ui-monospace,Consolas,monospace" font-size="13">motor → 3V3 · emitter → GND</text>
+      <text x="26" y="142" fill="#525a68" font-size="12">Add a flyback diode across the motor.</text>
+    </g>
+    <g transform="translate(920,590)">
+      <rect width="380" height="100" rx="14" fill="#0d0f14" stroke="#1c212b"/>
+      <rect x="0" y="0" width="4" height="100" rx="2" fill="#525a68"/>
+      <text x="26" y="40" fill="#e9ecf3" font-size="20" font-weight="700">Antenna switch (onboard)</text>
+      <text x="26" y="70" fill="#8a93a4" font-size="14">GPIO3 / GPIO14 enable the external antenna.</text>
+      <text x="26" y="90" fill="#f0596b" font-size="13">Remove this init on a XIAO and the radio goes deaf.</text>
+    </g>
+  </g>
+
+  <!-- connector lines -->
+  <g fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M480 285 H520 V495 H552" stroke="#7c8cff"/>
+    <path d="M480 465 H540 V555 H552" stroke="#525a68"/>
+    <path d="M920 285 H880 V495 H848" stroke="#7c8cff"/>
+    <path d="M920 465 H880 V555 H848" stroke="#f0596b"/>
+    <circle cx="552" cy="495" r="3.5" fill="#7c8cff" stroke="none"/>
+    <circle cx="552" cy="555" r="3.5" fill="#525a68" stroke="none"/>
+    <circle cx="848" cy="495" r="3.5" fill="#7c8cff" stroke="none"/>
+    <circle cx="848" cy="555" r="3.5" fill="#f0596b" stroke="none"/>
+  </g>
+</svg>

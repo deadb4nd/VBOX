@@ -1,11 +1,13 @@
 # VeloBox
 
+![VeloBox — turn any phone into a WiFi attack console](assets/banner.svg)
+
 > **Turn any phone into a WiFi attack console — from a $15 board.**
 >
 > No screen. No SD card. No laptop. No serial cable.
 > Drop it, walk away, and pull cracked-ready WPA2 handshakes out of your pocket.
 
-**VeloBox is a tiny ESP32-C6 node you plant, and a web console you open on your phone.** That's the whole product. It's open source, it runs on hardware you can buy for the price of lunch, and it does the one workflow that $300 of desk-bound gear still can't.
+**VeloBox is a tiny ESP32-C6 node you plant, and a web console you open on your phone.** That's the whole product. It's open source, it runs on hardware you can buy for the price of lunch, and it's built for the one thing the pricey gear makes awkward: a plantable, phone-run op with no SD card, no laptop, and no app to install.
 
 **If that's interesting: give it a star so other people find it too.**
 
@@ -24,6 +26,8 @@ Every option makes you choose: **cheap but annoying**, or **powerful but obvious
 
 That's the gap VeloBox fills — and the code is yours to read, fork, and improve.
 
+![VeloBox compared with Flipper Zero, WiFi Pineapple Pager, ESP32 Marauder and Biscuit Pro](assets/compare.svg)
+
 ---
 
 ## The 3-tap demo
@@ -34,7 +38,9 @@ This is the entire point:
 2. **Deauth** — tap a target. VeloBox sends real 802.11 deauth frames and **automatically harvests the 4-way handshake** while stations reconnect.
 3. **Download** — save the `.pcap` straight from the browser and let hashcat `-m 22000` do the rest.
 
-No SD card. No screen. No CLI. No laptop. Three taps, phone-native, from your pocket.
+No SD card. No screen. No CLI. No laptop. Three taps, phone-native, from your pocket — and unlike the closed tools, you can read every line of what just happened.
+
+![The VeloBox workflow: recon, deauth and harvest, download, crack offline](assets/workflow.svg)
 
 ---
 
@@ -57,6 +63,10 @@ No SD card. No screen. No CLI. No laptop. Three taps, phone-native, from your po
 - **Stealth by default** — boring, configurable AP name, no screen, no default lights
 - **Haptics** — buzzer + vibration motor for quiet feedback
 
+Here's the console you actually operate. Every tile is generated from the firmware registry, so the UI grows with the code:
+
+![The VeloBox phone console](assets/console.svg)
+
 ---
 
 ## Why this exists (and why it's free)
@@ -69,9 +79,32 @@ VeloBox is neither. It's a **working, phone-native red-team node** with a codeba
 
 If it's useful, the trade is simple: **star the repo, break it, file bugs, and send the modules you write back upstream.**
 
+### Standing on shoulders (prior art)
+
+VeloBox is **not the first pocket wireless tool**, and it doesn't pretend to be. It exists because a lot of good work came before it, and because those tools each leave a different gap:
+
+- **ESP32 Marauder** — proved a single cheap ESP32 could do real recon and capture. Closed-feeling firmware, screen-and-buttons workflow.
+- **Biscuit Pro** (Biscuit Shop) — a polished, closed, ~$250 dual-band (2.4 + 5 GHz) **wardriving-first** platform with a native iOS/Android app over BLE. Genuinely good hardware. Its gap: it's commercial, proprietary, 2.4 GHz-only is *not* its problem, and you can't fork it.
+- **Flipper Zero + devboard** — the reason people expect a pocket tool to be fun and app-driven. Expensive, SD-card workflow, not really a plantable WiFi node.
+- **WiFi Pineapple** — the original rogue-AP workhorse. Desk-bound and obvious.
+- **Pwnagotchi** — showed the world a small device could autonomously hunt handshakes.
+
+Credit where it's due. VeloBox's bet is different, not better: **open, browser-controlled, plantable, and built to be extended** rather than sold.
+
+### What VeloBox is not
+
+Being clear about this is the whole point:
+
+- **Not a wardriver.** No GPS mapping, no WiGLE upload. Buy a Biscuit Pro if that's your job.
+- **Not dual-band.** It's a single **ESP32-C6 on 2.4 GHz** (WiFi 6) + BLE 5. No 5 GHz. That's a hardware limit, not a bug.
+- **Not an app.** There's no iOS/Android client — the phone's browser *is* the app, served from the device.
+- **Not turnkey.** It's a dev project. You flash it, and sometimes you fix it.
+
+If you want a finished product with a warranty, buy one. If you want to own the stack, build this.
+
 ---
 
-## Make it yours (the part nobody else gets right)
+## Make it yours (extend it in an afternoon)
 
 Most tools make you learn the whole codebase to change a button. VeloBox was designed so you don't have to.
 
@@ -111,6 +144,8 @@ Full walkthrough: [`docs/customizing.md`](docs/customizing.md).
 
 This isn't a devkit on a desk. Mine is a $15 board and a handful of parts I pulled out of a dead drone. You can build one for roughly the price of a takeout order.
 
+![VeloBox, built and running](assets/velobox.jpg)
+
 **Bill of materials**
 
 | Part | What it does | Notes |
@@ -133,6 +168,8 @@ This isn't a devkit on a desk. Mine is a $15 board and a handful of parts I pull
 | `GPIO10` | Piezo buzzer | Pin → buzzer `+`, buzzer `-` → GND |
 | `GPIO15` | Status LED | Active **LOW** — LED cathode to the pin, anode to 3V3 through a resistor |
 | `GPIO3` / `GPIO14` | Antenna switch | Already on the XIAO. The firmware enables the external antenna — remove this init and the radio goes deaf |
+
+![VeloBox wiring diagram](assets/wiring.svg)
 
 Every pin is defined in [`include/velobox_config.h`](include/velobox_config.h), so if you wire it differently, change one line.
 
@@ -167,6 +204,8 @@ Optional extras (all configurable in `include/velobox_config.h`): tilt switch, b
 - **Storage:** NVS for settings, SPIFFS for scripts and the web app
 - **Quality:** a pure, host-tested core — `66/66` tests pass with no hardware attached
 - **License:** [add your license here — MIT/Apache-2.0 recommended for adoption]
+
+![VeloBox firmware architecture](assets/architecture.svg)
 
 ```
 components/
@@ -204,6 +243,12 @@ No. It captures the handshake/PMKID and hands you a `.pcap`. You crack it offlin
 
 **Do I need a laptop?**
 Not in the field. The whole op runs from the phone. You'll want a laptop later for hashcat.
+
+**How is this different from Biscuit Pro / Marauder / Flipper?**
+Different bet, not a clone — see [Standing on shoulders](#standing-on-shoulders-prior-art). Short version: those are closed and mostly commercial; this is open, browser-driven, plantable, single-band, and designed to be forked. If you want a turnkey wardriver, buy a Biscuit. If you want to build and extend your own, use this.
+
+**Does it do 5 GHz or wardriving?**
+No, and no. It's a single ESP32-C6 on 2.4 GHz with no GPS. Those are out of scope on purpose.
 
 **Is this legal?**
 Only against networks you own or have written authorization to test. See below.
