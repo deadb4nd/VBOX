@@ -19,6 +19,10 @@ static const struct cmd_entry CMDS[] = {
     {"ble", SCRIPT_CMD_BLE_SPAM},    {"probe", SCRIPT_CMD_PROBE},
     {"fakeap", SCRIPT_CMD_FAKE_AP},  {"fake_ap", SCRIPT_CMD_FAKE_AP},
     {"wait", SCRIPT_CMD_WAIT},       {"sleep", SCRIPT_CMD_WAIT},
+    /* generic: runs any module registered in the firmware by its slug,
+       so new tools are scriptable without touching this file */
+    {"action", SCRIPT_CMD_ACTION},   {"module", SCRIPT_CMD_ACTION},
+    {"run", SCRIPT_CMD_ACTION},
 };
 
 static int hexval(int c) {
@@ -78,9 +82,18 @@ const char *script_cmd_name(script_cmd_t c) {
         return "fakeap";
     case SCRIPT_CMD_WAIT:
         return "wait";
+    case SCRIPT_CMD_ACTION:
+        return "action";
     default:
         return "none";
     }
+}
+
+const char *script_step_name(const script_step_t *st) {
+    if (st->cmd == SCRIPT_CMD_ACTION && st->slug[0]) {
+        return st->slug;
+    }
+    return script_cmd_name(st->cmd);
 }
 
 bool script_cmd_from_name(const char *name, script_cmd_t *out) {
@@ -216,6 +229,21 @@ uint32_t script_parse(const char *text, script_t *out) {
                 continue;
             }
 
+            /* "action <slug>": first bare non-MAC, non-number token is the
+               module id, resolved against the firmware registry at run time */
+            if (step.cmd == SCRIPT_CMD_ACTION && step.slug[0] == '\0' &&
+                !token_is_mac(tok) && !token_is_number(tok)) {
+                size_t sl = strlen(tok);
+                if (sl > sizeof(step.slug) - 1) {
+                    sl = sizeof(step.slug) - 1;
+                }
+                for (size_t k = 0; k < sl; k++) {
+                    step.slug[k] = (char)tolower((unsigned char)tok[k]);
+                }
+                step.slug[sl] = '\0';
+                continue;
+            }
+
             if (token_is_mac(tok)) {
                 uint8_t mac[6];
                 (void)script_parse_mac(tok, mac);
@@ -238,6 +266,15 @@ uint32_t script_parse(const char *text, script_t *out) {
     return out->count;
 }
 
+/* The command as it should be written back to text. */
+static void step_label(const script_step_t *st, char *out, size_t cap) {
+    if (st->cmd == SCRIPT_CMD_ACTION) {
+        snprintf(out, cap, "action %s", st->slug);
+    } else {
+        snprintf(out, cap, "%s", script_cmd_name(st->cmd));
+    }
+}
+
 size_t script_to_text(const script_t *s, char *buf, size_t len) {
     if (!s || !buf || len == 0) {
         return 0;
@@ -245,23 +282,25 @@ size_t script_to_text(const script_t *s, char *buf, size_t len) {
     size_t w = 0;
     for (uint32_t i = 0; i < s->count; i++) {
         const script_step_t *st = &s->steps[i];
+        char label[32];
+        step_label(st, label, sizeof(label));
         int n;
         if (st->has_ap && st->has_client) {
             n = snprintf(buf + w, len - w,
                          "%s %02x:%02x:%02x:%02x:%02x:%02x "
                          "%02x:%02x:%02x:%02x:%02x:%02x %lu\n",
-                         script_cmd_name(st->cmd), st->ap[0], st->ap[1],
+                         label, st->ap[0], st->ap[1],
                          st->ap[2], st->ap[3], st->ap[4], st->ap[5],
                          st->client[0], st->client[1], st->client[2],
                          st->client[3], st->client[4], st->client[5],
                          (unsigned long)st->duration_ms);
         } else if (st->has_ap) {
             n = snprintf(buf + w, len - w, "%s ap=%02x:%02x:%02x:%02x:%02x:%02x ms=%lu\n",
-                         script_cmd_name(st->cmd), st->ap[0], st->ap[1],
+                         label, st->ap[0], st->ap[1],
                          st->ap[2], st->ap[3], st->ap[4], st->ap[5],
                          (unsigned long)st->duration_ms);
         } else {
-            n = snprintf(buf + w, len - w, "%s %lu\n", script_cmd_name(st->cmd),
+            n = snprintf(buf + w, len - w, "%s %lu\n", label,
                          (unsigned long)st->duration_ms);
         }
         if (n < 0) {

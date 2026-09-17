@@ -24,6 +24,7 @@
 #define SCRIPT_DEFAULT_MS 5000
 #define SCRIPT_MIN_MS 100
 #define SCRIPT_MAX_MS 600000
+#define SCRIPT_SLUG_MAX 20
 
 typedef enum {
     SCRIPT_CMD_NONE = 0,
@@ -34,11 +35,13 @@ typedef enum {
     SCRIPT_CMD_PROBE,    /* probe-request flood */
     SCRIPT_CMD_FAKE_AP,  /* beacon spam / rogue AP */
     SCRIPT_CMD_WAIT,     /* do nothing, just burn the duration */
+    SCRIPT_CMD_ACTION,   /* run any module by slug: "action <slug> [ms=]" */
     SCRIPT_CMD_COUNT
 } script_cmd_t;
 
 typedef struct {
     script_cmd_t cmd;
+    char slug[SCRIPT_SLUG_MAX]; /* SCRIPT_CMD_ACTION: module id */
     uint32_t duration_ms;
     bool has_ap;
     uint8_t ap[6];
@@ -53,6 +56,10 @@ typedef struct {
 
 const char *script_cmd_name(script_cmd_t c);
 bool script_cmd_from_name(const char *name, script_cmd_t *out);
+
+/* Display name of a step: the module slug for an "action <slug>" step,
+   otherwise the fixed command name. */
+const char *script_step_name(const script_step_t *st);
 
 /* Accepts "aabbccddeeff", "aa:bb:cc:dd:ee:ff" and "aa-bb-cc-dd-ee-ff". */
 bool script_parse_mac(const char *s, uint8_t out[6]);

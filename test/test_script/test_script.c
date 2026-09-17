@@ -133,6 +133,36 @@ void test_empty_input_yields_zero(void) {
     TEST_ASSERT_EQUAL_UINT32(0, script_parse(NULL, &s));
 }
 
+/* "action <slug>" runs any module registered in the firmware, so new tools
+   are scriptable without touching the parser. */
+void test_generic_action_command(void) {
+    script_t s;
+    TEST_ASSERT_EQUAL_UINT32(1, script_parse("action mytool 7000\n", &s));
+    TEST_ASSERT_EQUAL_INT(SCRIPT_CMD_ACTION, s.steps[0].cmd);
+    TEST_ASSERT_EQUAL_STRING("mytool", s.steps[0].slug);
+    TEST_ASSERT_EQUAL_UINT32(7000, s.steps[0].duration_ms);
+    TEST_ASSERT_EQUAL_STRING("mytool", script_step_name(&s.steps[0]));
+
+    /* aliases + targeting through the generic form */
+    TEST_ASSERT_EQUAL_UINT32(
+        1, script_parse("run deauth ap=aabbccddee01 client=aabbccddee02 4000\n",
+                        &s));
+    TEST_ASSERT_EQUAL_STRING("deauth", s.steps[0].slug);
+    TEST_ASSERT_TRUE(s.steps[0].has_ap);
+    TEST_ASSERT_TRUE(s.steps[0].has_client);
+    TEST_ASSERT_EQUAL_UINT32(4000, s.steps[0].duration_ms);
+
+    /* round-trips as an explicit `action <slug>` line */
+    char buf[128];
+    script_to_text(&s, buf, sizeof(buf));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "action deauth"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "aa:bb:cc:dd:ee:01"));
+
+    /* fixed commands still report their own name */
+    script_parse("wait 500\n", &s);
+    TEST_ASSERT_EQUAL_STRING("wait", script_step_name(&s.steps[0]));
+}
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_parse_basic_steps);
@@ -148,5 +178,6 @@ int main(void) {
     RUN_TEST(test_roundtrip_to_text);
     RUN_TEST(test_total_ms);
     RUN_TEST(test_empty_input_yields_zero);
+    RUN_TEST(test_generic_action_command);
     return UNITY_END();
 }

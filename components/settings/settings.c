@@ -1,5 +1,7 @@
 #include "settings.h"
 
+#include "velobox_config.h"
+
 #include <stdio.h>
 #include <string.h>
 
@@ -39,12 +41,12 @@ void settings_init_default(velo_settings_t *s) {
     s->default_action = SETTING_ACTION_DEAUTH;
     s->idle_timeout_ms = 1500;
     s->warning_duration_ms = 2000;
-    snprintf(s->ap_ssid, SETTINGS_SSID_MAX_LEN, "%s", "VeloBox");
+    snprintf(s->ap_ssid, SETTINGS_SSID_MAX_LEN, "%s", VELO_DEFAULT_AP_SSID);
     s->fakeap_channel = 1;
     s->fakeap_max_connections = 4;
     s->fakeap_beacon_interval = 100;
     s->ble_spam_enabled = true;
-    s->sleep_timeout_ms = 0; /* deep sleep off by default */
+    s->sleep_timeout_ms = VELO_DEFAULT_SLEEP_MS; /* sleep off by default */
 
     static const size_t default_count =
         sizeof(DEFAULT_SSIDS) / sizeof(DEFAULT_SSIDS[0]);

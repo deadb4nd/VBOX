@@ -3,24 +3,57 @@
 #include "settings.h"
 #include "script.h"
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+
+/* UI grouping for a module. The web console renders one tile grid per
+   group, in registry order. */
+#define VELO_GROUP_OPERATIONS 0 /* disruptive / attacking tools */
+#define VELO_GROUP_RECON 1      /* passive discovery tools      */
+
+/* The single source of truth. module_list.h holds the VELO_MODULE_LIST(X)
+   table; here we expand it into the ACTION_* enum. Add a tool there, not
+   here. */
+#include "module_list.h"
 
 typedef enum {
     ACTION_NONE = 0,
-    ACTION_WIFI_DEAUTH,
-    ACTION_BLE_SPAM,
-    ACTION_FAKE_AP,
-    ACTION_RECON,       /* WiFi AP/stations scan + deauth/EAPOL counters */
-    ACTION_BLE_SCAN,    /* BLE GAP discovery */
-    ACTION_PROBE_FLOOD, /* probe-request flood */
+#define VELO_MODULE_ENUM(id, slug, label, hint, group, danger, flag, run) id,
+    VELO_MODULE_LIST(VELO_MODULE_ENUM)
+#undef VELO_MODULE_ENUM
     ACTION_COUNT
 } action_t;
+
+/* One entry per module, generated from module_list.h. Everything the
+   console and the action engine need lives here. */
+typedef struct {
+    action_t action;              /* internal id                      */
+    const char *slug;             /* stable API/UI id, e.g. "deauth"  */
+    const char *label;            /* human name, e.g. "WiFi Deauth"   */
+    const char *hint;             /* one-line description for the UI  */
+    uint8_t group;                /* VELO_GROUP_*                     */
+    bool danger;                  /* destructive -> danger styling    */
+    uint8_t flag;                 /* VELO_ENABLE_* (0 = compiled out) */
+    void (*run)(volatile bool *kill); /* the tool's body             */
+} velo_module_t;
 
 /* The actions component reads settings from this struct. Must be
    called once after settings have been loaded. */
 void actions_set_settings(velo_settings_t *s);
 
 const char *actions_name(action_t a);
+
+/* ---- module registry ---- */
+/* All modules compiled in, in UI order. `*count` receives the length. */
+const velo_module_t *actions_modules(size_t *count);
+const velo_module_t *actions_module_at(size_t i);
+const velo_module_t *actions_module_for(action_t a);
+const velo_module_t *actions_module_by_slug(const char *slug);
+/* Registry id for an action ("" if unknown, "none" for ACTION_NONE). */
+const char *actions_slug(action_t a);
+/* Enabled = compiled in AND permitted by current settings (e.g. BLE spam
+   may be switched off). */
+bool actions_module_enabled(const velo_module_t *m);
 
 /* Start running `a` in a background task. Returns false if another
    action is already running (call actions_stop() first) or the action

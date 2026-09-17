@@ -14,6 +14,7 @@
 #include "script.h"
 #include "settings.h"
 #include "settings_nvs.h"
+#include "velobox_config.h"
 
 #include <fcntl.h>
 #include <stdio.h>
@@ -30,6 +31,7 @@
 static const char *DEFAULT_SCRIPT =
     "# VeloBox script - one step per line\n"
     "# commands: deauth recon blescan blespam probe fakeap wait\n"
+    "# any module too: action <slug>   (e.g. action deauth ms=5000)\n"
     "# args: ap=MAC client=MAC ms=N  (bare MAC and bare number also work)\n"
     "recon 15000\n"
     "deauth 5000\n"
@@ -174,25 +176,6 @@ static size_t json_escape(char *out, size_t len, const char *in) {
     }
     out[i] = '\0';
     return i;
-}
-
-static const char *action_slug(action_t a) {
-    switch (a) {
-    case ACTION_WIFI_DEAUTH:
-        return "deauth";
-    case ACTION_BLE_SPAM:
-        return "ble";
-    case ACTION_FAKE_AP:
-        return "fakeap";
-    case ACTION_RECON:
-        return "recon";
-    case ACTION_BLE_SCAN:
-        return "blescan";
-    case ACTION_PROBE_FLOOD:
-        return "probe";
-    default:
-        return "none";
-    }
 }
 
 static const char *content_type_for(const char *path) {
@@ -346,7 +329,7 @@ static esp_err_t handler_api_status(httpd_req_t *req) {
              "\"deauth\":%lu,\"probes\":%lu,\"beacons\":%lu,"
              "\"handshakes\":%lu,\"eapol_frames\":%lu,\"free_heap\":%lu",
              running ? "true" : "false", idle ? "true" : "false",
-             action_slug(cur), actions_name(cur), (unsigned long)ctr.deauth_sent,
+             actions_slug(cur), actions_name(cur), (unsigned long)ctr.deauth_sent,
              (unsigned long)ctr.probe_sent, (unsigned long)ctr.beacon_sent,
              (unsigned long)handshakes, (unsigned long)frames,
              (unsigned long)free);
@@ -378,7 +361,7 @@ static esp_err_t handler_api_status(httpd_req_t *req) {
             n = snprintf(p, (size_t)(end - p),
                          "%s{\"cmd\":\"%s\",\"ms\":%lu,\"ap\":\"%s\","
                          "\"sta\":\"%s\",\"phase\":\"%s\"}",
-                         i ? "," : "", script_cmd_name(st->cmd),
+                         i ? "," : "", script_step_name(st),
                          (unsigned long)st->duration_ms, ap, sta, phase);
             if (n < 0) {
                 break;
@@ -387,6 +370,47 @@ static esp_err_t handler_api_status(httpd_req_t *req) {
         }
     }
     snprintf(p, (size_t)(end - p), "]}}\n");
+    esp_err_t err = httpd_send_json(req, 200, buf);
+    heap_caps_free(buf);
+    return err;
+}
+
+/* Machine-readable description of this firmware build: brand + the list
+   of modules the UI should render. The frontend builds its tiles from
+   this, so adding a module is a backend-only change. */
+static esp_err_t handler_api_capabilities(httpd_req_t *req) {
+    note_activity();
+    size_t count = 0;
+    const velo_module_t *mods = actions_modules(&count);
+
+    size_t cap = 1024 + count * 160;
+    char *buf = heap_caps_malloc(cap, MALLOC_CAP_8BIT);
+    if (!buf) {
+        send_err(req, "oom");
+        return ESP_OK;
+    }
+    char *p = buf;
+    char *end = buf + cap;
+    int n = snprintf(p, (size_t)(end - p),
+                     "{\"brand\":{\"name\":\"%s\",\"tagline\":\"%s\"},"
+                     "\"modules\":[",
+                     VELO_BRAND_NAME, VELO_BRAND_TAGLINE);
+    p += n;
+
+    for (size_t i = 0; i < count; i++) {
+        n = snprintf(p, (size_t)(end - p),
+                     "%s{\"slug\":\"%s\",\"label\":\"%s\",\"hint\":\"%s\","
+                     "\"group\":%u,\"danger\":%s,\"enabled\":%s}",
+                     i ? "," : "", mods[i].slug, mods[i].label, mods[i].hint,
+                     (unsigned)mods[i].group,
+                     mods[i].danger ? "true" : "false",
+                     actions_module_enabled(&mods[i]) ? "true" : "false");
+        if (n < 0 || p + n >= end) {
+            break;
+        }
+        p += n;
+    }
+    snprintf(p, (size_t)(end - p), "]}\n");
     esp_err_t err = httpd_send_json(req, 200, buf);
     heap_caps_free(buf);
     return err;
@@ -407,23 +431,16 @@ static esp_err_t handler_api_action(httpd_req_t *req) {
         return ESP_OK;
     }
 
-    action_t a;
-    if (!strcmp(name, "deauth")) {
-        a = ACTION_WIFI_DEAUTH;
-    } else if (!strcmp(name, "ble")) {
-        a = ACTION_BLE_SPAM;
-    } else if (!strcmp(name, "fakeap")) {
-        a = ACTION_FAKE_AP;
-    } else if (!strcmp(name, "recon")) {
-        a = ACTION_RECON;
-    } else if (!strcmp(name, "blescan")) {
-        a = ACTION_BLE_SCAN;
-    } else if (!strcmp(name, "probe")) {
-        a = ACTION_PROBE_FLOOD;
-    } else {
+    const velo_module_t *mod = actions_module_by_slug(name);
+    if (!mod) {
         send_err(req, "unknown action");
         return ESP_OK;
     }
+    if (!actions_module_enabled(mod)) {
+        send_err(req, "action disabled");
+        return ESP_OK;
+    }
+    action_t a = mod->action;
 
     /* optional targeting for deauth */
     actions_clear_target();
@@ -904,6 +921,8 @@ esp_err_t web_start(velo_settings_t *s) {
 
     register_handler(g_server, "/", HTTP_GET, handler_root);
     register_handler(g_server, "/api/status", HTTP_GET, handler_api_status);
+    register_handler(g_server, "/api/capabilities", HTTP_GET,
+                     handler_api_capabilities);
     register_handler(g_server, "/api/action", HTTP_POST, handler_api_action);
     register_handler(g_server, "/api/stop", HTTP_POST, handler_api_stop);
     register_handler(g_server, "/api/settings", HTTP_GET, handler_api_settings_get);

@@ -68,7 +68,9 @@ function setStatePill(el, text, cls) {
 }
 
 function setAllDisabled(disabled) {
-  document.querySelectorAll("[data-action]").forEach((b) => (b.disabled = disabled));
+  document.querySelectorAll("[data-action]").forEach((b) => {
+    if (!b.dataset.locked) b.disabled = disabled;
+  });
   $("stop").disabled = !disabled;
   $("stop2").disabled = !disabled;
 }
@@ -174,12 +176,64 @@ async function startAction(action, extra, label) {
   pollStatus();
 }
 
-document.querySelectorAll(".tile[data-action]").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    const title = btn.querySelector(".tile-title");
-    startAction(btn.dataset.action, btn.dataset.extra, title && title.textContent);
+/* ---------------- capabilities -> dynamic UI ---------------- */
+
+const GROUP_TARGET = { 0: "tiles-operations", 1: "tiles-recon" };
+let ENABLED = {};
+
+function tileHtml(m) {
+  return (
+    `<button class="tile${m.danger ? " danger" : ""}" data-action="${esc(m.slug)}"` +
+    (m.enabled ? "" : ' disabled data-locked="1"') +
+    `><span class="tile-title">${esc(m.label)}</span>` +
+    `<span class="tile-sub">${esc(m.hint)}</span></button>`
+  );
+}
+
+/* Tiles and branding come from the firmware, so adding a backend module
+   shows up here with no HTML/JS changes. */
+async function loadCapabilities() {
+  let caps;
+  try {
+    caps = await api("/api/capabilities");
+  } catch (e) {
+    return;
+  }
+
+  const brand = caps.brand || {};
+  if (brand.name) {
+    $("brand-name").textContent = brand.name;
+    document.title = `${brand.name} Console`;
+  }
+  if (brand.tagline) $("brand-tagline").textContent = brand.tagline;
+
+  const buckets = {};
+  ENABLED = {};
+  (caps.modules || []).forEach((m) => {
+    ENABLED[m.slug] = !!m.enabled;
+    (buckets[m.group] || (buckets[m.group] = [])).push(m);
   });
+  Object.keys(buckets).forEach((g) => {
+    const el = $(GROUP_TARGET[g]);
+    if (el) el.innerHTML = buckets[g].map(tileHtml).join("");
+  });
+
+  /* hide hand-written quick-start tiles whose module is compiled out
+     (the generated grids keep disabled tiles visible but greyed) */
+  document.querySelectorAll(".tile[data-action]").forEach((t) => {
+    if (t.closest("#tiles-operations, #tiles-recon")) return;
+    if (ENABLED[t.dataset.action] === false) t.hidden = true;
+  });
+}
+
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".tile[data-action]");
+  if (!btn || btn.disabled) return;
+  const title = btn.querySelector(".tile-title");
+  startAction(btn.dataset.action, btn.dataset.extra, title && title.textContent);
 });
+
+loadCapabilities();
 
 async function stopAll() {
   try {

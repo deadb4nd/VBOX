@@ -6,6 +6,7 @@
 #include "recon.h"
 #include "settings.h"
 #include "settings_nvs.h"
+#include "velobox_config.h"
 #include "web.h"
 
 #include <driver/gpio.h>
@@ -20,10 +21,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define LED_GPIO GPIO_NUM_15    // XIAO ESP32C6 built-in LED (active LOW)
-#define BUZZER_GPIO GPIO_NUM_10 // <-- change to your buzzer pin
-#define MOTOR_GPIO GPIO_NUM_2
-#define BALL_BTN GPIO_NUM_21
+/* Pins come from include/velobox_config.h - edit them there. */
+#define LED_GPIO ((gpio_num_t)VELO_PIN_LED)
+#define BUZZER_GPIO ((gpio_num_t)VELO_PIN_BUZZER)
+#define MOTOR_GPIO ((gpio_num_t)VELO_PIN_MOTOR)
+#define BALL_BTN ((gpio_num_t)VELO_PIN_BALL_BTN)
 
 #define LOOP_DELAY_MS 50
 
@@ -32,11 +34,13 @@ static const char *TAG = "VELO_BOX";
 static velo_settings_t g_settings; // global, NVS-backed
 
 static void configure_external_antenna(void) {
-  gpio_set_direction(GPIO_NUM_3, GPIO_MODE_OUTPUT);
-  gpio_set_level(GPIO_NUM_3, 0);
+#if VELO_PIN_ANT_SEL >= 0 && VELO_PIN_ANT_EN >= 0
+  gpio_set_direction((gpio_num_t)VELO_PIN_ANT_SEL, GPIO_MODE_OUTPUT);
+  gpio_set_level((gpio_num_t)VELO_PIN_ANT_SEL, 0);
   vTaskDelay(pdMS_TO_TICKS(100));
-  gpio_set_direction(GPIO_NUM_14, GPIO_MODE_OUTPUT);
-  gpio_set_level(GPIO_NUM_14, 1);
+  gpio_set_direction((gpio_num_t)VELO_PIN_ANT_EN, GPIO_MODE_OUTPUT);
+  gpio_set_level((gpio_num_t)VELO_PIN_ANT_EN, 1);
+#endif
 }
 
 void log_memory_usage() {
@@ -193,7 +197,7 @@ static void enter_safe_mode(void) {
    level wake works on any digital GPIO and wakes the instant the ball rolls.
    We reboot on wake so WiFi/AP come back cleanly and the box always returns
    in safe mode; a long timer keepalive means it can never wedge asleep. */
-#define SLEEP_KEEPALIVE_US (30LL * 60 * 1000000) /* 30 min */
+#define SLEEP_KEEPALIVE_US VELO_SLEEP_KEEPALIVE_US /* 30 min */
 
 static void enter_sleep(void) {
   int64_t idle = power_idle_ms(esp_timer_get_time());
