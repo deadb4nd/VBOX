@@ -13,11 +13,10 @@
  *
  * Adding a new tool ("module") is also designed to be easy: see
  * docs/customizing.md for a copy-paste template. Short version:
- *   1. add an ACTION_* enum in components/actions/actions.h
- *   2. add a row to k_modules[] in components/actions/actions.c
- *   3. add a `case` in action_task_wrapper() in actions.c
- *   4. (optional) add a feature flag below
- * The web UI builds itself from the registry, so no HTML/JS edits needed.
+ *   1. add one X(...) row to VELO_MODULE_LIST in module_list.h
+ *   2. add one run_* function (optional feature flag below)
+ * The web UI, the API and the script engine all build themselves from the
+ * registry, so no HTML/JS edits are ever needed.
  */
 
 /* ------------------------------------------------------------------ *
