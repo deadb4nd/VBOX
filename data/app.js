@@ -36,21 +36,90 @@ async function api(path, opts) {
   return res.json();
 }
 
+function esc(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 const AUTH = ["OPEN", "WEP", "WPA", "WPA2", "WPA3", "?"];
+const CMD_LABEL = {
+  deauth: "Deauth",
+  recon: "WiFi Scan",
+  blescan: "BLE Scan",
+  blespam: "BLE Spam",
+  probe: "Probe Flood",
+  fakeap: "Fake AP",
+  wait: "Wait",
+};
+
+function fmtMs(ms) {
+  if (!ms) return "—";
+  return ms % 1000 === 0 ? `${ms / 1000}s` : `${(ms / 1000).toFixed(1)}s`;
+}
 
 /* ---------------- status polling ---------------- */
 
 function setStatePill(el, text, cls) {
   el.textContent = text;
-  el.className = "state " + cls;
+  el.className = "badge " + cls;
 }
 
 function setAllDisabled(disabled) {
-  document
-    .querySelectorAll(".btn[data-action]")
-    .forEach((b) => (b.disabled = disabled));
-  $("#stop").disabled = !disabled;
-  $("#stop2").disabled = !disabled;
+  document.querySelectorAll("[data-action]").forEach((b) => (b.disabled = disabled));
+  $("stop").disabled = !disabled;
+  $("stop2").disabled = !disabled;
+}
+
+function stepTarget(st) {
+  if (st.cmd !== "deauth") return "";
+  const ap = st.ap || "";
+  const sta = st.sta || "";
+  if (!ap && !sta) return "broadcast";
+  if (ap && sta) return `${ap} \u2192 ${sta}`;
+  if (ap) return `${ap} \u2192 broadcast`;
+  return "";
+}
+
+function renderQueue(script) {
+  const running = !!(script && script.running);
+  const steps = (script && script.steps) || [];
+  const idx = script ? script.index : 0;
+
+  $("queue-summary").textContent = running ? `${idx + 1}/${steps.length}` : "idle";
+  $("script-queue-meta").textContent = running ? `${idx + 1}/${steps.length} running` : "idle";
+
+  if (!running) {
+    $("queue-line").className = "queue-empty";
+    $("queue-line").textContent = "No script running.";
+    $("script-queue").innerHTML = '<div class="queue-empty">No script running.</div>';
+    return;
+  }
+
+  const cur = steps[idx] || {};
+  const next = steps[idx + 1];
+  const curLabel = CMD_LABEL[cur.cmd] || cur.cmd || "—";
+  $("queue-line").className = "";
+  $("queue-line").innerHTML =
+    `Step ${idx + 1} of ${steps.length}: <b>${esc(curLabel)}</b> (${fmtMs(cur.ms)})` +
+    (next ? ` &middot; next ${esc(CMD_LABEL[next.cmd] || next.cmd)}` : " &middot; final step");
+
+  $("script-queue").innerHTML = steps
+    .map((st, i) => {
+      const target = stepTarget(st);
+      return (
+        `<div class="q-item ${esc(st.phase)}">` +
+        `<span class="q-idx">${i + 1}</span>` +
+        `<span class="q-main"><span class="q-cmd">${esc(CMD_LABEL[st.cmd] || st.cmd)}</span>` +
+        (target ? `<span class="q-target">${esc(target)}</span>` : "") +
+        `</span>` +
+        `<span class="q-dur">${fmtMs(st.ms)}</span>` +
+        `</div>`
+      );
+    })
+    .join("");
 }
 
 async function pollStatus() {
@@ -78,6 +147,8 @@ async function pollStatus() {
     $("c-deauth").textContent = st.deauth || 0;
     $("c-probe").textContent = st.probes || 0;
     $("c-beacons").textContent = st.beacons || 0;
+
+    renderQueue(st.script);
   } catch (e) {
     setConn(false);
   }
@@ -87,24 +158,26 @@ pollStatus();
 
 /* ---------------- control + recon actions ---------------- */
 
-document.querySelectorAll(".btn[data-action]").forEach((btn) => {
-  btn.addEventListener("click", async () => {
-    const extra = btn.dataset.extra;
-    const body = new URLSearchParams({
-      name: btn.dataset.action,
+async function startAction(action, extra, label) {
+  const body = new URLSearchParams({ name: action });
+  if (extra) body.append("extra", extra);
+  try {
+    await api("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
     });
-    if (extra) body.append("extra", extra);
-    try {
-      await api("/api/action", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
-      });
-      flash(`Started: ${btn.textContent}`, true);
-    } catch (e) {
-      flash(e.message || "Failed to start action", false);
-    }
-    pollStatus();
+    flash(`Started: ${label || action}`, true);
+  } catch (e) {
+    flash(e.message || "Failed to start action", false);
+  }
+  pollStatus();
+}
+
+document.querySelectorAll(".tile[data-action]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const title = btn.querySelector(".tile-title");
+    startAction(btn.dataset.action, btn.dataset.extra, title && title.textContent);
   });
 });
 
@@ -122,8 +195,7 @@ $("stop2").addEventListener("click", stopAll);
 
 /* targeted deauth: fires immediately with bssid (and optional client) */
 async function fireTargeted(apHex, clientHex) {
-  $("target-name").textContent =
-    apHex + (clientHex ? " -> " + clientHex : "");
+  $("target-name").textContent = apHex + (clientHex ? " \u2192 " + clientHex : "");
   $("target-chip").classList.remove("hidden");
   const body = new URLSearchParams({ name: "deauth" });
   body.set("bssid", apHex);
@@ -144,11 +216,10 @@ async function fireTargeted(apHex, clientHex) {
 $("clear-target").addEventListener("click", () =>
   $("target-chip").classList.add("hidden"));
 
-/* handshake harvest: clear the in-RAM capture log */
 $("clear-caps").addEventListener("click", async () => {
   try {
     await api("/api/captures/clear", { method: "POST" });
-    flash("Captures cleared", true);
+    flash("Capture log cleared", true);
   } catch (e) {
     flash(e.message || "Clear failed", false);
   }
@@ -156,14 +227,6 @@ $("clear-caps").addEventListener("click", async () => {
 });
 
 /* ---------------- recon rendering ---------------- */
-
-function esc(s) {
-  return String(s || "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
 
 function authLabel(auth) {
   return AUTH[auth] || "?";
@@ -192,54 +255,61 @@ async function renderRecon() {
   $("h-pairs").textContent = hv.pairs || 0;
   $("h-frames").textContent = hv.eapol_frames || 0;
 
+  const caps = sc.captures || [];
+  const aps = sc.aps || [];
+  const stas = sc.stations || [];
+  const bles = sc.ble || [];
+  $("ap-count").textContent = `${aps.length} found`;
+  $("sta-count").textContent = `${stas.length} found`;
+  $("ble-count").textContent = `${bles.length} found`;
+
   const capBody = $("cap-table").querySelector("tbody");
   capBody.innerHTML = "";
-  (sc.captures || []).forEach((c) => {
+  caps.forEach((c) => {
     const tr = document.createElement("tr");
     tr.innerHTML =
       `<td class="mono">${esc(c.ap)}</td>` +
       `<td class="mono">${esc(c.sta)}</td>` +
-      `<td>${c.msgs}</td>` +
-      `<td class="${c.has_pmkid ? "ok" : ""}">` +
-      (c.has_pmkid ? "PMKID" : "-") + `</td>` +
-      `<td class="${c.ready ? "ok" : ""}">${c.ready ? "READY" : "-"}</td>`;
+      `<td class="num">${c.msgs}</td>` +
+      `<td class="${c.has_pmkid ? "ok" : "dim"}">${c.has_pmkid ? "PMKID" : "—"}</td>` +
+      `<td class="${c.ready ? "ok" : "dim"}">${c.ready ? "READY" : "incomplete"}</td>`;
     capBody.appendChild(tr);
   });
 
   const apBody = $("ap-table").querySelector("tbody");
   apBody.innerHTML = "";
-  (sc.aps || []).forEach((ap) => {
+  aps.forEach((ap) => {
     const tr = document.createElement("tr");
     const name = ap.ssid || (ap.hidden ? "(hidden)" : "(no name)");
     tr.innerHTML =
       `<td class="nm">${esc(name)}</td>` +
-      `<td>${ap.ch}</td>` +
-      `<td class="rssi">${typeof ap.rssi === "number" ? ap.rssi : "-"}</td>` +
+      `<td class="num">${ap.ch}</td>` +
+      `<td class="rssi">${typeof ap.rssi === "number" ? ap.rssi : "—"}</td>` +
       `<td>${authLabel(ap.auth)}</td>` +
-      `<td><button class="mini ap-deauth" data-bssid="${ap.bssid}">Deauth</button></td>`;
+      `<td><button class="btn-cell ap-deauth" data-bssid="${ap.bssid}">Deauth</button></td>`;
     apBody.appendChild(tr);
   });
 
   const staBody = $("sta-table").querySelector("tbody");
   staBody.innerHTML = "";
-  (sc.stations || []).forEach((st) => {
+  stas.forEach((st) => {
     const tr = document.createElement("tr");
     tr.innerHTML =
       `<td class="mono">${esc(st.mac)}</td>` +
       `<td class="mono">${esc(st.ap)}</td>` +
-      `<td class="rssi">${typeof st.rssi === "number" ? st.rssi : "-"}</td>` +
-      `<td><button class="mini sta-deauth" data-bssid="${st.ap}" data-client="${st.mac}">Deauth</button></td>`;
+      `<td class="rssi">${typeof st.rssi === "number" ? st.rssi : "—"}</td>` +
+      `<td><button class="btn-cell sta-deauth" data-bssid="${st.ap}" data-client="${st.mac}">Deauth</button></td>`;
     staBody.appendChild(tr);
   });
 
   const bleBody = $("ble-table").querySelector("tbody");
   bleBody.innerHTML = "";
-  (sc.ble || []).forEach((b) => {
+  bles.forEach((b) => {
     const tr = document.createElement("tr");
     tr.innerHTML =
       `<td class="nm">${esc(b.name)}</td>` +
       `<td class="mono">${esc(b.mac)}</td>` +
-      `<td class="rssi">${typeof b.rssi === "number" ? b.rssi : "-"}</td>`;
+      `<td class="rssi">${typeof b.rssi === "number" ? b.rssi : "—"}</td>`;
     bleBody.appendChild(tr);
   });
 }
@@ -253,7 +323,6 @@ document.addEventListener("click", (e) => {
   const staBtn = e.target.closest(".sta-deauth");
   if (staBtn) {
     fireTargeted(staBtn.dataset.bssid, staBtn.dataset.client);
-    return;
   }
 });
 
@@ -265,9 +334,9 @@ renderRecon();
 function scriptMsg(msg, ok) {
   const el = $("script-status");
   el.textContent = msg;
-  el.className = "flash show " + (ok ? "ok" : "err");
+  el.className = "toolbar-info " + (ok ? "ok" : "err");
   clearTimeout(scriptMsg._t);
-  scriptMsg._t = setTimeout(() => (el.className = "flash"), 4000);
+  scriptMsg._t = setTimeout(() => (el.className = "toolbar-info"), 4000);
 }
 
 let scriptLoaded = false;
@@ -277,7 +346,7 @@ async function loadScript() {
     const s = await api("/api/script");
     $("script-text").value = s.text || "";
     scriptLoaded = true;
-    scriptMsg(`${s.steps} step(s)`, true);
+    scriptMsg(`${s.steps} step(s) loaded`, true);
   } catch (e) {
     scriptMsg("Could not load script", false);
   }
@@ -344,7 +413,7 @@ $("settings-form").addEventListener("submit", async (ev) => {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
     });
-    msgEl.textContent = "Settings saved";
+    msgEl.textContent = "Configuration saved";
     msgEl.className = "flash show ok";
   } catch (e) {
     msgEl.textContent = e.message || "Save failed";

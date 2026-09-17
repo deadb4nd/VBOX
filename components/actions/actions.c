@@ -25,6 +25,7 @@ static action_t g_current_action = ACTION_NONE;
 static TaskHandle_t g_script_task = NULL;
 static volatile bool g_kill_script = false;
 static script_t s_script;
+static volatile uint32_t s_script_index = 0;
 
 /* attack target (set from the UI before starting an action) */
 static uint8_t s_target_ap[6] = {0};
@@ -59,6 +60,19 @@ bool actions_is_running(void) {
 }
 action_t actions_current(void) { return g_current_action; }
 bool actions_script_running(void) { return g_script_task != NULL; }
+
+bool actions_script_snapshot(script_t *out, uint32_t *index) {
+    if (g_script_task == NULL) {
+        return false;
+    }
+    if (out) {
+        *out = s_script;
+    }
+    if (index) {
+        *index = s_script_index;
+    }
+    return true;
+}
 
 void actions_set_target(const uint8_t ap_bssid[6], const uint8_t client[6]) {
     if (ap_bssid) {
@@ -474,6 +488,7 @@ static void script_task_wrapper(void *pvParameters) {
              script_total_ms(&s_script));
 
     for (uint32_t i = 0; i < s_script.count && !g_kill_script; i++) {
+        s_script_index = i;
         script_step_t *st = &s_script.steps[i];
 
         if (st->cmd == SCRIPT_CMD_WAIT) {
@@ -519,6 +534,7 @@ bool actions_start_script(const script_t *s) {
         return false;
     }
     s_script = *s;
+    s_script_index = 0;
     g_kill_script = false;
     BaseType_t ok =
         xTaskCreate(script_task_wrapper, "script", 4096, NULL, 5, &g_script_task);

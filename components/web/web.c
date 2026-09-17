@@ -317,6 +317,8 @@ static esp_err_t handler_static(httpd_req_t *req) {
     return serve_file(req, path);
 }
 
+static void mac_to_hex(char *out, const uint8_t m[6]);
+
 static esp_err_t handler_api_status(httpd_req_t *req) {
     note_activity();
     bool running = actions_is_running();
@@ -330,18 +332,64 @@ static esp_err_t handler_api_status(httpd_req_t *req) {
     uint32_t handshakes = harvest_ready_count();
     uint32_t frames = harvest_frame_count();
     recon_unlock();
-    char buf[256];
-    snprintf(buf, sizeof(buf),
+
+    size_t cap = 2048;
+    char *buf = heap_caps_malloc(cap, MALLOC_CAP_8BIT);
+    if (!buf) {
+        send_err(req, "oom");
+        return ESP_OK;
+    }
+    char *p = buf;
+    char *end = buf + cap;
+    int n = snprintf(p, (size_t)(end - p),
              "{\"running\":%s,\"idle\":%s,\"action\":\"%s\",\"label\":\"%s\","
              "\"deauth\":%lu,\"probes\":%lu,\"beacons\":%lu,"
-             "\"handshakes\":%lu,\"eapol_frames\":%lu,"
-             "\"free_heap\":%lu}\n",
+             "\"handshakes\":%lu,\"eapol_frames\":%lu,\"free_heap\":%lu",
              running ? "true" : "false", idle ? "true" : "false",
              action_slug(cur), actions_name(cur), (unsigned long)ctr.deauth_sent,
              (unsigned long)ctr.probe_sent, (unsigned long)ctr.beacon_sent,
              (unsigned long)handshakes, (unsigned long)frames,
              (unsigned long)free);
-    return httpd_send_json(req, 200, buf);
+    p += n;
+
+    script_t sc;
+    uint32_t idx = 0;
+    bool script_on = actions_script_snapshot(&sc, &idx);
+    n = snprintf(p, (size_t)(end - p),
+                 ",\"script\":{\"running\":%s,\"index\":%lu,\"count\":%lu,"
+                 "\"steps\":[",
+                 script_on ? "true" : "false",
+                 (unsigned long)(script_on ? idx : 0),
+                 (unsigned long)(script_on ? sc.count : 0));
+    p += n;
+    if (script_on) {
+        for (uint32_t i = 0; i < sc.count && p < end - 128; i++) {
+            const script_step_t *st = &sc.steps[i];
+            char ap[18] = "";
+            char sta[18] = "";
+            if (st->has_ap) {
+                mac_to_hex(ap, st->ap);
+            }
+            if (st->has_client) {
+                mac_to_hex(sta, st->client);
+            }
+            const char *phase =
+                i < idx ? "done" : (i == idx ? "active" : "pending");
+            n = snprintf(p, (size_t)(end - p),
+                         "%s{\"cmd\":\"%s\",\"ms\":%lu,\"ap\":\"%s\","
+                         "\"sta\":\"%s\",\"phase\":\"%s\"}",
+                         i ? "," : "", script_cmd_name(st->cmd),
+                         (unsigned long)st->duration_ms, ap, sta, phase);
+            if (n < 0) {
+                break;
+            }
+            p += n;
+        }
+    }
+    snprintf(p, (size_t)(end - p), "]}}\n");
+    esp_err_t err = httpd_send_json(req, 200, buf);
+    heap_caps_free(buf);
+    return err;
 }
 
 static esp_err_t handler_api_action(httpd_req_t *req) {

@@ -13,10 +13,10 @@
 #include <esp_log.h>
 #include <esp_sleep.h>
 #include <esp_timer.h>
+#include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <nvs_flash.h>
-#include <soc/soc_caps.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -187,33 +187,41 @@ static void enter_safe_mode(void) {
   ESP_LOGI(TAG, ">> SAFE MODE - will not fire (roll to arm)");
 }
 
-/* Deep sleep: ball roll wakes the chip via the HP-peripheral GPIO wake
-   source, with a long timer as a keepalive so it can never wedge asleep.
-   Deep sleep is a full reset, so the box always comes back in safe mode. */
+/* Low-power idle. NOTE: on the ESP32-C6 only GPIO0..7 can wake from *deep*
+   sleep (SOC_GPIO_HP_PERIPH_PD_SLEEP_WAKEABLE_MASK), and the ball switch is
+   on GPIO21, so deep sleep can never see a tilt. Light sleep instead: its
+   level wake works on any digital GPIO and wakes the instant the ball rolls.
+   We reboot on wake so WiFi/AP come back cleanly and the box always returns
+   in safe mode; a long timer keepalive means it can never wedge asleep. */
 #define SLEEP_KEEPALIVE_US (30LL * 60 * 1000000) /* 30 min */
 
-static void enter_deep_sleep(void) {
+static void enter_sleep(void) {
   int64_t idle = power_idle_ms(esp_timer_get_time());
-  ESP_LOGI(TAG, ">> deep sleep after %lld ms idle - roll the ball to wake",
+  ESP_LOGI(TAG, ">> sleep after %lld ms idle - roll the ball to wake",
            (long long)idle);
   haptic_stop_all();
   led_off();
   buzzer_off();
   motor_off();
 
-  /* esp_sleep_enable_gpio_wakeup_on_hp_periph_powerdown() configures the
-     internal pull-up for the low-level wake, so no manual pad setup here. */
-#if defined(SOC_GPIO_SUPPORT_HP_PERIPH_PD_SLEEP_WAKEUP) && \
-    SOC_GPIO_SUPPORT_HP_PERIPH_PD_SLEEP_WAKEUP
-  esp_err_t err = esp_sleep_enable_gpio_wakeup_on_hp_periph_powerdown(
-      1ULL << BALL_BTN, ESP_GPIO_WAKEUP_GPIO_LOW);
-  if (err != ESP_OK) {
-    ESP_LOGW(TAG, "gpio deep-sleep wake unavailable (%s); timer only",
-             esp_err_to_name(err));
-  }
-#endif
+  /* park the radios so we genuinely save power and don't fight the sleep */
+  ble_spam_stop();
+  ble_scan_stop();
+  esp_wifi_stop();
+
+  /* rest = whatever level the ball sits at; wake on the opposite edge, so a
+     roll in either mounting orientation wakes us and we never self-trigger */
+  int rest = gpio_get_level(BALL_BTN);
+  gpio_int_type_t wake_level = rest ? GPIO_INTR_LOW_LEVEL : GPIO_INTR_HIGH_LEVEL;
+  gpio_set_direction(BALL_BTN, GPIO_MODE_INPUT);
+  gpio_pullup_en(BALL_BTN);
+  gpio_pulldown_dis(BALL_BTN);
+  gpio_wakeup_enable(BALL_BTN, wake_level);
+  esp_sleep_enable_gpio_wakeup();
   esp_sleep_enable_timer_wakeup(SLEEP_KEEPALIVE_US);
-  esp_deep_sleep_start();
+
+  esp_light_sleep_start();
+  esp_restart(); /* ball tilt and 30-min keepalive both land here */
 }
 
 /* track the active label so "done" logging survives action reset */
@@ -263,7 +271,7 @@ void app_main(void) {
   ESP_LOGI(TAG, "fakeap         : ch %u, %u conn, %u TU", g_settings.fakeap_channel,
            g_settings.fakeap_max_connections, g_settings.fakeap_beacon_interval);
   ESP_LOGI(TAG, "ble spam       : %s", g_settings.ble_spam_enabled ? "enabled" : "disabled");
-  ESP_LOGI(TAG, "deep sleep     : %lu ms%s", (unsigned long)g_settings.sleep_timeout_ms,
+  ESP_LOGI(TAG, "sleep idle     : %lu ms%s", (unsigned long)g_settings.sleep_timeout_ms,
            g_settings.sleep_timeout_ms ? "" : " (off)");
   ESP_LOGI(TAG, "ssids          : %u loaded", g_settings.ssid_count);
   ESP_LOGI(TAG, "web            : http://192.168.4.1/");
@@ -454,7 +462,7 @@ void app_main(void) {
 
     if (!running_now && g_state == STATE_BROWSING &&
         power_should_sleep(now, g_settings.sleep_timeout_ms)) {
-      enter_deep_sleep();
+      enter_sleep();
     }
 
     g_last_ball = ball_value;

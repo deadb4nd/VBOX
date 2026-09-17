@@ -2,228 +2,359 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VeloBox</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>VeloBox Console</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header>
-    <h1>VELO<span>BOX</span></h1>
-    <div class="conn" id="conn">
+  <header class="appbar">
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 40 40" aria-hidden="true">
+        <g transform="rotate(-35 20 20)">
+          <circle class="ring outer" cx="20" cy="20" r="15.5" stroke-dasharray="72 25"></circle>
+          <circle class="ring inner" cx="20" cy="20" r="9.5" stroke-dasharray="44 16"></circle>
+        </g>
+        <circle class="core" cx="20" cy="20" r="3.2"></circle>
+      </svg>
+      <div class="brand-text">
+        <h1>VeloBox</h1>
+        <span>Wireless Assessment Console</span>
+      </div>
+    </div>
+    <div class="conn" id="conn" title="Link to control panel">
       <span class="dot"></span>
       <span id="conn-txt">offline</span>
     </div>
   </header>
 
-  <nav class="tabs">
-    <button class="tab active" data-tab="control">Control</button>
-    <button class="tab" data-tab="recon">Recon</button>
-    <button class="tab" data-tab="script">Script</button>
-    <button class="tab" data-tab="settings">Settings</button>
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="control" role="tab">Control</button>
+    <button class="tab" data-tab="recon" role="tab">Recon</button>
+    <button class="tab" data-tab="script" role="tab">Script</button>
+    <button class="tab" data-tab="settings" role="tab">Settings</button>
   </nav>
 
   <main>
     <!-- ================= CONTROL ================= -->
     <section id="tab-control" class="view active">
-      <div class="card status-card">
-        <div class="row">
-          <span class="lbl">State</span>
-          <span id="state" class="state idle">IDLE</span>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>System</h2>
+          <span class="panel-meta">live</span>
         </div>
-        <div class="row">
-          <span class="lbl">Action</span>
-          <span id="action">None</span>
+        <div class="panel-body">
+          <div class="kv">
+            <div class="kv-row">
+              <span class="kv-k">State</span>
+              <span id="state" class="badge idle">IDLE</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-k">Active action</span>
+              <span id="action" class="kv-v">None</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-k">Free heap</span>
+              <span id="heap" class="kv-v mono">--</span>
+            </div>
+          </div>
+          <div id="safe-hint" class="notice">
+            SAFE mode active. The ball trigger will not fire; phone control still works.
+          </div>
         </div>
-        <div class="row">
-          <span class="lbl">Free heap</span>
-          <span id="heap">--</span>
-        </div>
-      </div>
-      <div id="safe-hint" class="safe-hint">
-        Device is in SAFE pocket-mode - the ball will not auto-fire. Phone
-        controls still work.
       </div>
 
-      <div class="btn-grid">
-        <button class="btn act" data-action="deauth">WiFi Deauth</button>
-        <button class="btn act" data-action="ble">BLE Spam</button>
-        <button class="btn act" data-action="fakeap">Fake AP</button>
+      <div class="panel" id="queue-panel">
+        <div class="panel-head">
+          <h2>Execution queue</h2>
+          <span class="panel-meta" id="queue-summary">idle</span>
+        </div>
+        <div class="panel-body">
+          <div id="queue-line" class="queue-empty">No script running.</div>
+        </div>
       </div>
-      <div class="btn-grid func">
-        <button class="btn fn" data-action="recon">WiFi Scan</button>
-        <button class="btn fn" data-action="blescan">BLE Scan</button>
-        <button class="btn fn" data-action="probe">Probe Flood</button>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Operations</h2>
+          <span class="panel-meta">active attack</span>
+        </div>
+        <div class="panel-body">
+          <div class="tiles">
+            <button class="tile danger" data-action="deauth">
+              <span class="tile-title">WiFi Deauth</span>
+              <span class="tile-sub">802.11 disassociation flood</span>
+            </button>
+            <button class="tile" data-action="ble">
+              <span class="tile-title">BLE Spam</span>
+              <span class="tile-sub">Advertising flood, all profiles</span>
+            </button>
+            <button class="tile" data-action="fakeap">
+              <span class="tile-title">Fake AP</span>
+              <span class="tile-sub">Beacon flood with cloned SSIDs</span>
+            </button>
+          </div>
+          <button class="btn btn-danger btn-block" id="stop">Stop all activity</button>
+          <div id="flash" class="flash"></div>
+        </div>
       </div>
-      <button class="btn stop" id="stop">Stop</button>
-      <div id="flash" class="flash"></div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Reconnaissance</h2>
+          <span class="panel-meta">passive</span>
+        </div>
+        <div class="panel-body">
+          <div class="tiles tiles-3">
+            <button class="tile util" data-action="recon">
+              <span class="tile-title">WiFi Scan</span>
+              <span class="tile-sub">AP + client discovery</span>
+            </button>
+            <button class="tile util" data-action="blescan">
+              <span class="tile-title">BLE Scan</span>
+              <span class="tile-sub">GAP device discovery</span>
+            </button>
+            <button class="tile util" data-action="probe">
+              <span class="tile-title">Probe Flood</span>
+              <span class="tile-sub">Probe-request injection</span>
+            </button>
+          </div>
+        </div>
+      </div>
     </section>
 
     <!-- ================= RECON ================= -->
     <section id="tab-recon" class="view">
-      <div class="card scan-head">
-        <div class="row">
-          <span class="lbl">WiFi sniff</span>
-          <span id="wifi-scan" class="state idle">off</span>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Sniffer</h2>
+          <span class="panel-meta">802.11 monitor</span>
         </div>
-        <div class="row">
-          <span class="lbl">BLE scan</span>
-          <span id="ble-scan" class="state idle">off</span>
-        </div>
-        <div class="counters" id="counters">
-          <span>bcn <b id="c-beacons">0</b></span>
-          <span>prb <b id="c-probe">0</b></span>
-          <span>deauth <b id="c-deauth">0</b></span>
-          <span>eapol <b id="c-eapol">0</b></span>
-          <span>data <b id="c-data">0</b></span>
-        </div>
-      </div>
-      <div class="btn-grid func">
-        <button class="btn fn" data-action="recon">Start WiFi Scan</button>
-        <button class="btn fn" data-action="blescan">Start BLE Scan</button>
-        <button class="btn stop" id="stop2">Stop</button>
-      </div>
-      <div id="target-chip" class="target-chip hidden">
-        Target <b id="target-name"></b>
-        <button id="clear-target" class="mini">clear</button>
-      </div>
-
-      <div class="card harvest">
-        <h2>WPA handshake harvest</h2>
-        <div class="counters">
-          <span>ready <b id="h-ready">0</b></span>
-          <span>pairs <b id="h-pairs">0</b></span>
-          <span>eapol <b id="h-frames">0</b></span>
-        </div>
-        <div class="btn-grid func">
-          <a class="btn fn" id="dl-pcap" href="/api/captures/download"
-             download="capture.pcap">Download .pcap</a>
-          <button class="btn stop" id="clear-caps">Clear</button>
-        </div>
-        <p class="hint">Captured automatically during any scan, deauth or
-          probe flood. A "ready" pair (AP+client) 4-way handshake cracks
-          offline with aircrack-ng / hashcat.</p>
-        <div class="table-wrap">
-          <table id="cap-table">
-            <thead>
-              <tr><th>AP</th><th>Client</th><th>Msgs</th><th>PMKID</th><th>Ready</th></tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+        <div class="panel-body">
+          <div class="kv">
+            <div class="kv-row">
+              <span class="kv-k">WiFi monitor</span>
+              <span id="wifi-scan" class="badge idle">off</span>
+            </div>
+            <div class="kv-row">
+              <span class="kv-k">BLE discovery</span>
+              <span id="ble-scan" class="badge idle">off</span>
+            </div>
+          </div>
+          <div class="stats" id="counters">
+            <div class="stat"><span class="stat-v" id="c-beacons">0</span><span class="stat-k">beacons</span></div>
+            <div class="stat"><span class="stat-v" id="c-probe">0</span><span class="stat-k">probes</span></div>
+            <div class="stat"><span class="stat-v" id="c-deauth">0</span><span class="stat-k">deauth</span></div>
+            <div class="stat"><span class="stat-v" id="c-eapol">0</span><span class="stat-k">eapol</span></div>
+            <div class="stat"><span class="stat-v" id="c-data">0</span><span class="stat-k">data</span></div>
+          </div>
+          <div class="tiles tiles-2">
+            <button class="tile util" data-action="recon">
+              <span class="tile-title">Start WiFi Scan</span>
+              <span class="tile-sub">Promiscuous channel hop</span>
+            </button>
+            <button class="tile util" data-action="blescan">
+              <span class="tile-title">Start BLE Scan</span>
+              <span class="tile-sub">Continuous discovery</span>
+            </button>
+          </div>
+          <button class="btn btn-danger btn-block" id="stop2">Stop all activity</button>
+          <div id="target-chip" class="chip hidden">
+            <span class="chip-label">Target</span>
+            <b id="target-name"></b>
+            <button id="clear-target" class="btn btn-xs">clear</button>
+          </div>
         </div>
       </div>
 
-      <div class="card">
-        <h2>Access points</h2>
-        <div class="table-wrap">
-          <table id="ap-table">
-            <thead>
-              <tr><th>SSID</th><th>Ch</th><th>dBm</th><th>Sec</th><th></th></tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>WPA handshake harvest</h2>
+          <span class="panel-meta">capture log</span>
+        </div>
+        <div class="panel-body">
+          <div class="stats">
+            <div class="stat"><span class="stat-v" id="h-ready">0</span><span class="stat-k">ready pairs</span></div>
+            <div class="stat"><span class="stat-v" id="h-pairs">0</span><span class="stat-k">tracked</span></div>
+            <div class="stat"><span class="stat-v" id="h-frames">0</span><span class="stat-k">eapol frames</span></div>
+          </div>
+          <div class="toolbar">
+            <a class="btn btn-primary" id="dl-pcap" href="/api/captures/download" download="capture.pcap">Download .pcap</a>
+            <button class="btn" id="clear-caps">Clear log</button>
+          </div>
+          <p class="hint">Captured automatically during any monitor session. A ready pair cracks offline with aircrack-ng or hashcat.</p>
+          <div class="table-wrap">
+            <table id="cap-table">
+              <thead>
+                <tr><th>AP</th><th>Client</th><th class="num">Msgs</th><th>PMKID</th><th>Status</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
       </div>
 
-      <div class="card">
-        <h2>Clients</h2>
-        <div class="table-wrap">
-          <table id="sta-table">
-            <thead>
-              <tr><th>Client</th><th>AP</th><th>dBm</th><th></th></tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Access points</h2>
+          <span class="panel-meta" id="ap-count">0</span>
+        </div>
+        <div class="panel-body">
+          <div class="table-wrap">
+            <table id="ap-table">
+              <thead>
+                <tr><th>SSID</th><th class="num">Ch</th><th class="num">dBm</th><th>Security</th><th></th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
       </div>
 
-      <div class="card">
-        <h2>BLE devices</h2>
-        <div class="table-wrap">
-          <table id="ble-table">
-            <thead>
-              <tr><th>Name</th><th>MAC</th><th>dBm</th></tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Clients</h2>
+          <span class="panel-meta" id="sta-count">0</span>
+        </div>
+        <div class="panel-body">
+          <div class="table-wrap">
+            <table id="sta-table">
+              <thead>
+                <tr><th>Client</th><th>AP</th><th class="num">dBm</th><th></th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>BLE devices</h2>
+          <span class="panel-meta" id="ble-count">0</span>
+        </div>
+        <div class="panel-body">
+          <div class="table-wrap">
+            <table id="ble-table">
+              <thead>
+                <tr><th>Name</th><th>Address</th><th class="num">dBm</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </section>
 
     <!-- ================= SCRIPT ================= -->
     <section id="tab-script" class="view">
-      <div class="card">
-        <h2>Attack script</h2>
-        <p class="hint">One step per line. Commands: <b>deauth</b>,
-          <b>recon</b>, <b>blescan</b>, <b>blespam</b>, <b>probe</b>,
-          <b>fakeap</b>, <b>wait</b>. Args: <b>ap=MAC</b>,
-          <b>client=MAC</b>, <b>ms=N</b> (a bare MAC or number also works,
-          first MAC is the AP). <b>#</b> starts a comment.</p>
-        <textarea id="script-text" rows="12" spellcheck="false"
-          autocomplete="off"></textarea>
-        <div class="btn-grid func">
-          <button class="btn save" id="script-save">Save</button>
-          <button class="btn act" id="script-run">Run</button>
-          <button class="btn stop" id="script-stop">Stop</button>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Sequence editor</h2>
+          <span class="panel-meta">/spiffs/script.txt</span>
         </div>
-        <div id="script-status" class="flash"></div>
+        <div class="panel-body">
+          <p class="hint">One step per line. Commands <code>deauth recon blescan blespam probe fakeap wait</code>. Arguments <code>ap=MAC client=MAC ms=N</code>; a bare MAC or number is accepted. Lines starting with <code>#</code> are ignored.</p>
+          <textarea id="script-text" class="code" rows="12" spellcheck="false" autocomplete="off"></textarea>
+          <div class="toolbar">
+            <button class="btn btn-primary" id="script-save">Save</button>
+            <button class="btn" id="script-run">Run</button>
+            <button class="btn btn-danger" id="script-stop">Stop</button>
+            <span class="toolbar-info" id="script-status"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Execution queue</h2>
+          <span class="panel-meta" id="script-queue-meta">idle</span>
+        </div>
+        <div class="panel-body">
+          <div id="script-queue" class="queue">
+            <div class="queue-empty">No script running.</div>
+          </div>
+        </div>
       </div>
     </section>
 
     <!-- ================= SETTINGS ================= -->
     <section id="tab-settings" class="view">
-      <form id="settings-form" class="card">
-        <h2>Helmet network</h2>
-        <label>WiFi name you connect to
-          <input type="text" id="ap_ssid" maxlength="32" autocomplete="off" spellcheck="false">
-        </label>
-        <p class="hint">Takes effect immediately; device stays on 192.168.4.1.
-          Keep it generic for stealth.</p>
+      <form id="settings-form">
+        <div class="panel">
+          <div class="panel-head"><h2>Control network</h2></div>
+          <div class="panel-body">
+            <label class="field">AP name
+              <input type="text" id="ap_ssid" maxlength="32" autocomplete="off" spellcheck="false">
+            </label>
+            <p class="hint">Takes effect immediately. The device stays reachable at 192.168.4.1.</p>
+          </div>
+        </div>
 
-        <h2>Fake AP</h2>
-        <label>Channel
-          <input type="number" id="fakeap_channel" min="1" max="14" step="1">
-        </label>
-        <label>Max connections
-          <input type="number" id="fakeap_max_connections" min="1" max="8" step="1">
-        </label>
-        <label>Beacon interval (TU)
-          <input type="number" id="fakeap_beacon_interval" min="20" max="10000" step="1">
-        </label>
+        <div class="panel">
+          <div class="panel-head"><h2>Fake AP</h2></div>
+          <div class="panel-body">
+            <div class="field-grid">
+              <label class="field">Channel
+                <input type="number" id="fakeap_channel" min="1" max="14" step="1">
+              </label>
+              <label class="field">Max connections
+                <input type="number" id="fakeap_max_connections" min="1" max="8" step="1">
+              </label>
+              <label class="field">Beacon interval (TU)
+                <input type="number" id="fakeap_beacon_interval" min="20" max="10000" step="1">
+              </label>
+            </div>
+          </div>
+        </div>
 
-        <h2>Ball UI</h2>
-        <label>Default action
-          <select id="default_action">
-            <option value="0">WiFi Deauth</option>
-            <option value="1">BLE Spam</option>
-            <option value="2">Fake AP</option>
-            <option value="3">Off / Safe mode</option>
-          </select>
-        </label>
-        <label>Arm delay after roll (ms)
-          <input type="number" id="idle_timeout_ms" min="500" max="10000" step="100">
-        </label>
-        <label>Warning window before fire (ms)
-          <input type="number" id="warning_duration_ms" min="500" max="10000" step="100">
-        </label>
+        <div class="panel">
+          <div class="panel-head"><h2>Ball interface</h2></div>
+          <div class="panel-body">
+            <label class="field">Default action
+              <select id="default_action">
+                <option value="0">WiFi Deauth</option>
+                <option value="1">BLE Spam</option>
+                <option value="2">Fake AP</option>
+                <option value="3">Off / Safe mode</option>
+              </select>
+            </label>
+            <div class="field-grid">
+              <label class="field">Arm delay after roll (ms)
+                <input type="number" id="idle_timeout_ms" min="500" max="10000" step="100">
+              </label>
+              <label class="field">Warning window (ms)
+                <input type="number" id="warning_duration_ms" min="500" max="10000" step="100">
+              </label>
+            </div>
+            <label class="check">
+              <input type="checkbox" id="ble_spam_enabled">
+              <span>Enable BLE spam</span>
+            </label>
+          </div>
+        </div>
 
-        <label class="inline">
-          <input type="checkbox" id="ble_spam_enabled"> Enable BLE spam
-        </label>
+        <div class="panel">
+          <div class="panel-head"><h2>Power</h2></div>
+          <div class="panel-body">
+            <label class="field">Sleep after idle (ms, 0 = off)
+              <input type="number" id="sleep_timeout_ms" min="0" max="3600000" step="1000">
+            </label>
+            <p class="hint">Plantable mode: after this idle time the radios power down and the device sleeps. Rolling the ball wakes it (fresh boot, always SAFE). 0 never sleeps; values 1&ndash;29999 are ignored.</p>
+          </div>
+        </div>
 
-        <h2>Power</h2>
-        <label>Deep sleep after idle (ms, 0 = off)
-          <input type="number" id="sleep_timeout_ms" min="0" max="3600000" step="1000">
-        </label>
-        <p class="hint">For plantable mode: after this long with no roll and
-          nothing running, the box sleeps. Rolling the ball wakes it. 0 never
-          sleeps. Values between 1 and 29999 are ignored.</p>
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Fake AP SSIDs</h2>
+            <span class="panel-meta">one per line, max 32</span>
+          </div>
+          <div class="panel-body">
+            <textarea id="ssids" class="code" rows="8" spellcheck="false"></textarea>
+          </div>
+        </div>
 
-        <h2>Fake AP SSIDs</h2>
-        <label>One per line (max 32)
-          <textarea id="ssids" rows="8" spellcheck="false"></textarea>
-        </label>
-
-        <button class="btn save" type="submit">Save</button>
+        <button class="btn btn-primary btn-block" type="submit">Save configuration</button>
         <div id="save-msg" class="flash"></div>
       </form>
     </section>

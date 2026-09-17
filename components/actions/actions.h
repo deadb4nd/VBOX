@@ -36,6 +36,11 @@ void actions_stop(void);
 bool actions_start_script(const script_t *s);
 bool actions_script_running(void);
 
+/* Snapshot the currently-running script: copies its steps into `out` and
+   reports the 0-based index of the step being executed right now. Returns
+   false (leaving `out`/`index` untouched) when no script is running. */
+bool actions_script_snapshot(script_t *out, uint32_t *index);
+
 bool actions_is_running(void);
 action_t actions_current(void);
 
