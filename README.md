@@ -182,7 +182,7 @@ Every pin is defined in [`include/velobox_config.h`](include/velobox_config.h), 
 **You need:** Seeed XIAO ESP32-C6, [PlatformIO](https://platformio.org/), USB-C cable.
 
 ```bash
-git clone <this repo>
+git clone https://github.com/deadb4nd/VeloBox.git
 cd velo_box
 
 pio run -e seeed_xiao_esp32c6        # build firmware + web assets
@@ -203,7 +203,7 @@ Optional extras (all configurable in `include/velobox_config.h`): tilt switch, b
 - **Console:** plain HTML/CSS/JS, served from SPIFFS over the device's own softAP
 - **Storage:** NVS for settings, SPIFFS for scripts and the web app
 - **Quality:** a pure, host-tested core — `66/66` tests pass with no hardware attached
-- **License:** [add your license here — MIT/Apache-2.0 recommended for adoption]
+- **License:** [MIT](LICENSE) — do whatever you want with it, a credit is appreciated but not required
 
 ![VeloBox firmware architecture](assets/architecture.svg)
 
